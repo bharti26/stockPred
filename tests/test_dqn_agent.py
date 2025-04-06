@@ -27,9 +27,7 @@ def test_network_architecture(dqn_model):
     assert dqn_model.fc2.in_features == 64
     assert dqn_model.fc2.out_features == 64
     assert dqn_model.fc3.in_features == 64
-    assert dqn_model.fc3.out_features == 32
-    assert dqn_model.fc4.in_features == 32
-    assert dqn_model.fc4.out_features == 3
+    assert dqn_model.fc3.out_features == 3
 
 
 def test_forward_pass(dqn_model):

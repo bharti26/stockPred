@@ -12,6 +12,9 @@ A tool for predicting stock movements using reinforcement learning techniques wi
 - Trade history and performance metrics
 - Portfolio analysis
 - Top 10 stocks tracking
+- Automatic model selection based on stock ticker
+- Robust error handling and data validation
+- Flexible data fetching with multiple time intervals
 
 ## Setup
 
@@ -60,6 +63,7 @@ make format    # Format code
 make clean     # Clean up build files
 make train     # Train models
 make dashboard # Start dashboard
+make benchmark # Run performance benchmarks
 ```
 
 ## Running the Code
@@ -69,6 +73,9 @@ make dashboard # Start dashboard
 The system supports training on multiple stocks simultaneously:
 
 ```bash
+# Train on predefined stocks
+python src/train_models.py
+
 # Train on top 10 stocks (default)
 make train
 
@@ -77,8 +84,8 @@ python src/main.py --start-date 2020-01-01 --end-date 2023-12-31 --episodes 100
 ```
 
 Training will:
-- Fetch the top 10 most active stocks
-- Train a separate model for each stock
+- Train models for predefined stock tickers
+- Train separate optimized and default models
 - Save models to the `models` directory
 - Display training progress and metrics
 - Show a final summary of results
@@ -88,6 +95,13 @@ Training will:
 ```bash
 make test
 ```
+
+The test suite includes:
+- Unit tests for all components
+- Performance benchmarks
+- Integration tests
+- Real-time data handling tests
+- Model architecture tests
 
 ### Running the Dashboard
 
@@ -104,7 +118,7 @@ The dashboard will be available at `http://localhost:8050` (or your specified po
 ## Dashboard Features
 
 - Real-time stock data visualization
-- Interactive stock selection
+- Interactive stock selection with automatic model loading
 - Technical indicators display
 - Model prediction visualization
 - Trade history and performance metrics
@@ -114,6 +128,8 @@ The dashboard will be available at `http://localhost:8050` (or your specified po
   - Price changes
   - Trading volume
   - Color-coded performance indicators
+- Robust error handling and status display
+- Automatic data refresh and model updates
 
 ## Project Structure
 
@@ -122,18 +138,18 @@ stockPred/
 ├── src/
 │   ├── data/
 │   │   ├── stock_data.py      # Stock data fetching and preprocessing
-│   │   ├── realtime_data.py   # Real-time data streaming
+│   │   ├── realtime_data.py   # Real-time data streaming with error handling
 │   │   └── top_stocks.py      # Top stocks tracking
 │   ├── models/
-│   │   └── dqn_agent.py       # DQN agent implementation
+│   │   └── dqn_agent.py       # DQN agent with improved state handling
 │   ├── env/
-│   │   └── trading_env.py     # Trading environment
+│   │   └── trading_env.py     # Trading environment with enhanced rewards
 │   ├── dashboard/
-│   │   ├── app.py            # Main dashboard application
-│   │   └── run.py            # Dashboard runner
+│   │   ├── app.py            # Main dashboard with error handling
+│   │   └── run.py            # Dashboard runner with port configuration
 │   └── main.py               # Main training script
-├── tests/                    # Test files
-├── models/                   # Trained model files
+├── tests/                    # Comprehensive test suite
+├── models/                   # Trained model files (optimized and default)
 ├── results/                  # Training results and plots
 ├── requirements.txt          # Project dependencies
 ├── Makefile                 # Make commands for common tasks
@@ -143,11 +159,23 @@ stockPred/
 ## Model Architecture
 
 The system uses a Deep Q-Network (DQN) with:
+- 3-layer neural network architecture:
+  - Input layer: State size (varies by stock)
+  - Hidden layers: 64 units each with ReLU activation
+  - Output layer: 3 units (buy, sell, hold)
 - Experience replay for stable learning
 - Target network for stable Q-value estimation
 - Epsilon-greedy exploration strategy
 - Huber loss for robust training
-- Configurable hyperparameters
+- Improved state handling for various input formats
+- Automatic model selection based on stock characteristics
+
+### Data Handling Improvements
+- Multiple time interval support (1d, 1h, 5m)
+- Robust error handling for data fetching
+- Automatic retry mechanism for data streams
+- Graceful fallback for missing data
+- Enhanced technical indicators
 
 ## Contributing
 

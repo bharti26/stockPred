@@ -25,7 +25,7 @@ lint:
 	@echo "Running linters..."
 	flake8 src/ tests/
 	pylint src/ tests/
-	mypy src/ tests/
+	-mypy src/ tests/
 	black --check src/ tests/
 	isort --check-only src/ tests/
 

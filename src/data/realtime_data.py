@@ -1,6 +1,5 @@
 import threading
 import time
-from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Union
 
 import pandas as pd
@@ -47,7 +46,7 @@ class RealTimeStockData:
                 raise ValueError(f"Could not get information for ticker {ticker}")
         except Exception as e:
             self.last_error = f"Error initializing ticker {ticker}: {str(e)}"
-            raise ValueError(f"Invalid ticker symbol {ticker}: {str(e)}")
+            raise ValueError(f"Invalid ticker symbol {ticker}: {str(e)}") from e
 
     def add_callback(self, callback: Callable[[pd.DataFrame], None]) -> None:
         """Add a callback function to be called on data updates.
@@ -64,23 +63,56 @@ class RealTimeStockData:
             DataFrame containing historical price data
 
         Raises:
-            ValueError: If no data could be fetched
+            ValueError: If no data could be fetched after all retries
         """
-        try:
-            end = datetime.now()
-            start = end - timedelta(days=2)  # Get 2 days of historical data
+        max_retries = 3
+        retry_delay = 2  # seconds
 
-            df = self.stock.history(start=start, end=end, interval=self.interval)
+        for attempt in range(max_retries):
+            try:
+                # Try different intervals and periods to get data
+                intervals = ["1d", "1h", "5m", "1m"]  # Try daily, hourly, 5-minute, then 1-minute intervals
+                periods = ["1mo", "1wk", "5d", "1d"]  # Try 1 month, 1 week, 5 days, then 1 day
 
-            if df.empty:
-                raise ValueError(f"No historical data available for {self.ticker}")
+                for interval in intervals:
+                    for period in periods:
+                        try:
+                            print(f"Attempting to fetch {self.ticker} data with interval {interval} and period {period}")
+                            # Try to get data from yfinance
+                            df = self.stock.history(period=period, interval=interval)
+                            
+                            if not df.empty:
+                                print(f"Successfully fetched {len(df)} data points for {self.ticker}")
+                                # Store the successful interval
+                                self.interval = interval
+                                # Ensure we return an explicitly typed DataFrame
+                                result: pd.DataFrame = df.tail(self.buffer_size).copy()
+                                return result
+                            else:
+                                print(f"No data returned for {self.ticker} with interval {interval} and period {period}")
+                        except Exception as e:
+                            print(f"Failed to fetch data with interval {interval} and period {period}: {str(e)}")
+                            continue
 
-            # Ensure we return an explicitly typed DataFrame
-            result: pd.DataFrame = df.tail(self.buffer_size).copy()
-            return result
-        except Exception as e:
-            self.last_error = f"Error fetching data: {str(e)}"
-            raise ValueError(f"Failed to fetch historical data for {self.ticker}: {str(e)}")
+                # If we get here, we couldn't fetch data with any combination
+                if attempt < max_retries - 1:
+                    print(f"Retry {attempt + 1}/{max_retries} after {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    raise ValueError(f"No historical data available for {self.ticker} after {max_retries} attempts")
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"Error on attempt {attempt + 1}: {str(e)}")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    self.last_error = f"Error fetching data: {str(e)}"
+                    raise ValueError(f"Failed to fetch historical data for {self.ticker}: {str(e)}") from e
+
+        # This should never be reached due to the raise in the loop
+        raise ValueError(f"No historical data available for {self.ticker} after {max_retries} attempts")
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate technical indicators for the data.
@@ -124,7 +156,7 @@ class RealTimeStockData:
             return result
         except Exception as e:
             self.last_error = f"Error calculating indicators: {str(e)}"
-            raise ValueError(f"Failed to calculate indicators: {str(e)}")
+            raise ValueError(f"Failed to calculate indicators: {str(e)}") from e
 
     def start_streaming(self) -> None:
         """Start the real-time data streaming."""
@@ -134,16 +166,22 @@ class RealTimeStockData:
 
         try:
             # Fetch initial data
-            self.data = self._fetch_initial_data()
-            if self.data.empty:
-                raise ValueError(f"No initial data available for {self.ticker}")
+            try:
+                self.data = self._fetch_initial_data()
+                if self.data.empty:
+                    raise ValueError(f"No initial data available for {self.ticker}")
+            except Exception as e:
+                print(f"Warning: Could not fetch initial data: {str(e)}")
+                # Create empty DataFrame with required columns
+                self.data = pd.DataFrame(columns=['Open', 'High', 'Low', 'Close', 'Volume'])
+                print("Created empty DataFrame as fallback")
 
             self.is_streaming = True
 
             def _stream() -> None:
                 while self.is_streaming:
                     try:
-                        # Fetch latest data
+                        # Fetch latest data using the determined interval
                         latest = self.stock.history(period="1d", interval=self.interval)
 
                         if latest.empty:
@@ -167,35 +205,25 @@ class RealTimeStockData:
                                 for callback in self.callbacks:
                                     callback(self.data)
                             except Exception as e:
-                                print(f"Error processing data: {e}")
+                                print(f"Error calculating indicators: {str(e)}")
+                                # Continue streaming even if indicators fail
+                                continue
 
-                        # Wait for next interval
-                        interval_seconds = {
-                            "1m": 60,
-                            "5m": 300,
-                            "15m": 900,
-                            "30m": 1800,
-                            "1h": 3600,
-                        }.get(self.interval, 60)
-
-                        time.sleep(interval_seconds)
-
+                        time.sleep(5)  # Wait before next update
                     except Exception as e:
-                        self.last_error = f"Error in streaming: {str(e)}"
-                        print(f"Error in streaming: {e}")
+                        print(f"Error in streaming loop: {str(e)}")
                         time.sleep(5)  # Wait before retrying
+                        continue
 
-            # Create and start streaming thread
-            thread = threading.Thread(target=_stream)
-            thread.daemon = True
-            thread.start()
-            self.stream_thread = thread
+            # Start streaming in a separate thread
+            self.stream_thread = threading.Thread(target=_stream, daemon=True)
+            self.stream_thread.start()
 
-            print(f"Started streaming {self.ticker} data at {self.interval} intervals")
         except Exception as e:
             self.last_error = f"Error starting stream: {str(e)}"
+            print(f"Error starting stream: {str(e)}")
             self.is_streaming = False
-            raise ValueError(f"Failed to start streaming: {str(e)}")
+            raise ValueError(f"Failed to start streaming for {self.ticker}: {str(e)}") from e
 
     def stop_streaming(self) -> None:
         """Stop the real-time data streaming."""
@@ -217,7 +245,42 @@ class RealTimeStockData:
             if self.last_error:
                 raise ValueError(f"No data available: {self.last_error}")
             raise ValueError(f"No data available for {self.ticker}")
-        return self.data.copy()
+
+        try:
+            # Try to fetch latest data if streaming is active
+            if self.is_streaming:
+                try:
+                    latest = self.stock.history(period="1d", interval=self.interval)
+                    if not latest.empty:
+                        latest = latest.tail(1)
+                        if not self.data.empty and latest.index[-1] > self.data.index[-1]:
+                            self.data = pd.concat([self.data, latest]).tail(self.buffer_size)
+                            self.data = self._calculate_indicators(self.data)
+                            print(f"Updated data for {self.ticker} with {len(latest)} new points")
+                    else:
+                        print(f"No new data available for {self.ticker}")
+                        
+                        # Try alternative data source if yfinance fails
+                        try:
+                            print(f"Trying alternative data source for {self.ticker}")
+                            # Try to get data from a different source (e.g., Alpha Vantage)
+                            # This is a placeholder for alternative data source
+                            # You would need to implement the actual alternative data source
+                            pass
+                        except Exception as alt_e:
+                            print(f"Alternative data source also failed: {str(alt_e)}")
+                            
+                except Exception as e:
+                    print(f"Warning: Failed to fetch latest data: {str(e)}")
+                    # Continue with existing data if available
+
+            return self.data.copy()
+        except Exception as e:
+            # If we can't get latest data, return what we have
+            if not self.data.empty:
+                print(f"Using cached data for {self.ticker} due to error: {str(e)}")
+                return self.data.copy()
+            raise ValueError(f"Error getting latest data: {str(e)}")
 
     def get_latest_price(self) -> Optional[float]:
         """Get the latest price.

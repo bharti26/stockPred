@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from src.data.stock_data import StockData
 from src.data.top_stocks import get_top_stocks
 from src.env.trading_env import StockTradingEnv
-from src.models.dqn_agent import DQNAgent, Experience
+from src.models.dqn_agent import DQNAgent
 from src.train.trainer import StockTrader
 from src.eval.evaluator import StockEvaluator
 from src.test.tester import StockTester
@@ -60,14 +60,9 @@ def train_agent_on_stock(
             next_state, reward, done, truncated, _ = env.step(action)
 
             # Store experience
-            experience = Experience(
-                state=state,
-                action=action,
-                reward=reward,
-                next_state=next_state,
-                done=done
+            agent.remember(
+                state=state, action=action, reward=reward, next_state=next_state, done=done
             )
-            agent.remember(experience)
 
             # Train on batch
             if len(agent.memory) > batch_size:
@@ -77,7 +72,7 @@ def train_agent_on_stock(
             total_reward += reward
 
         rewards_history.append(total_reward)
-        portfolio_values.append(env.balance + (env.shares_held * df.iloc[-1]['Close']))
+        portfolio_values.append(env.balance + (env.shares_held * df.iloc[-1]["Close"]))
 
         if (episode + 1) % 10 == 0:
             print(f"Episode {episode + 1}/{episodes} - Total Reward: {total_reward:.2f}")
@@ -88,7 +83,7 @@ def train_agent_on_stock(
         "average_reward": sum(rewards_history) / len(rewards_history),
         "final_portfolio": portfolio_values[-1],
         "max_portfolio": max(portfolio_values),
-        "min_portfolio": min(portfolio_values)
+        "min_portfolio": min(portfolio_values),
     }
 
     return agent, env, metrics
@@ -115,10 +110,7 @@ def train_on_multiple_stocks(
         try:
             print(f"\nTraining on {ticker}...")
             agent, env, metrics = train_agent_on_stock(
-                ticker,
-                start_date,
-                end_date,
-                episodes_per_stock
+                ticker, start_date, end_date, episodes_per_stock
             )
 
             # Save the model
@@ -141,20 +133,33 @@ def train_on_multiple_stocks(
     return results
 
 
-def train_agent(stock_data, n_episodes=1000, batch_size=32, gamma=0.95):
+def train_agent(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    n_episodes: int = 1000,
+    batch_size: int = 32,
+) -> DQNAgent:
     """Train a DQN agent on historical stock data.
 
     Args:
-        stock_data: Historical stock data
+        ticker: Stock ticker symbol
+        start_date: Training data start date
+        end_date: Training data end date
         n_episodes: Number of training episodes
         batch_size: Size of training batch
-        gamma: Discount factor
 
     Returns:
-        Trained DQN agent
+        DQNAgent: Trained DQN agent
     """
+    # Initialize stock data
+    stock_data = StockData(ticker, start_date, end_date)
+    df = stock_data.fetch_data()
+    df = stock_data.add_technical_indicators()
+    df = stock_data.preprocess_data()
+
     # Create environment
-    env = StockTradingEnv(stock_data)
+    env = StockTradingEnv(df)
 
     # Create agent
     state_size = env.observation_space.shape[0]
@@ -165,78 +170,80 @@ def train_agent(stock_data, n_episodes=1000, batch_size=32, gamma=0.95):
     trainer = StockTrader(env, agent)
 
     # Train agent
-    trainer.train(n_episodes=n_episodes, batch_size=batch_size, gamma=gamma)
+    trainer.train(episodes=n_episodes, batch_size=batch_size)
 
     return agent
 
 
-def evaluate_agent(agent, stock_data):
+def evaluate_agent(
+    agent: DQNAgent, ticker: str, start_date: str, end_date: str
+) -> Dict[str, float]:
     """Evaluate a trained agent on test data.
 
     Args:
         agent: Trained DQN agent
-        stock_data: Test stock data
+        ticker: Stock ticker symbol
+        start_date: Test data start date
+        end_date: Test data end date
 
     Returns:
-        Evaluation metrics
+        Dict[str, float]: Evaluation metrics
     """
+    # Initialize stock data
+    stock_data = StockData(ticker, start_date, end_date)
+    df = stock_data.fetch_data()
+    df = stock_data.add_technical_indicators()
+    df = stock_data.preprocess_data()
+
     # Create environment
-    env = StockTradingEnv(stock_data)
+    env = StockTradingEnv(df)
 
     # Create evaluator
     evaluator = StockEvaluator(env, agent)
 
-    # Evaluate agent
-    metrics = evaluator.evaluate()
+    # Evaluate agent using backtesting
+    metrics = evaluator.backtest(initial_balance=10000.0)
 
     return metrics
 
 
-def test_agent(agent, stock_data):
+def test_agent(agent: DQNAgent, ticker: str, start_date: str, end_date: str) -> Dict[str, float]:
     """Test a trained agent on new data.
 
     Args:
         agent: Trained DQN agent
-        stock_data: New stock data for testing
+        ticker: Stock ticker symbol
+        start_date: Test data start date
+        end_date: Test data end date
 
     Returns:
-        Test metrics
+        Dict[str, float]: Test metrics including portfolio value and performance metrics
     """
+    # Initialize stock data
+    stock_data = StockData(ticker, start_date, end_date)
+    df = stock_data.fetch_data()
+    df = stock_data.add_technical_indicators()
+    df = stock_data.preprocess_data()
+
     # Create environment
-    env = StockTradingEnv(stock_data)
+    env = StockTradingEnv(df)
 
     # Create tester
     tester = StockTester(env, agent)
 
     # Test agent
-    metrics = tester.test()
+    portfolio_value, trades = tester.test(episodes=1)
+
+    # Calculate metrics
+    metrics = tester.calculate_metrics()
+    metrics["best_portfolio_value"] = portfolio_value
+    metrics["num_trades"] = len(trades)
 
     return metrics
 
 
 def main():
     """Main function to train and evaluate the trading agent."""
-    # Load stock data
-    stock_data = StockData()
-    train_data = stock_data.get_training_data()
-    test_data = stock_data.get_test_data()
-
-    # Train agent
-    print("Training agent...")
-    agent = train_agent(train_data)
-
-    # Evaluate agent
-    print("\nEvaluating agent...")
-    eval_metrics = evaluate_agent(agent, test_data)
-    print("Evaluation metrics:", eval_metrics)
-
-    # Test agent
-    print("\nTesting agent...")
-    test_metrics = test_agent(agent, test_data)
-    print("Test metrics:", test_metrics)
-
-
-if __name__ == "__main__":
     # Get top 10 stocks
     top_stocks = get_top_stocks()
     tickers = [stock["symbol"] for stock in top_stocks]
@@ -248,16 +255,47 @@ if __name__ == "__main__":
 
     print(f"Training on {len(tickers)} stocks: {', '.join(tickers)}")
     print(f"Training period: {start_date} to {end_date}")
-    print(f"Episodes per stock: {episodes_per_stock}")
+    print(f"Episodes per stock: {episodes_per_stock}\n")
 
-    # Train on all stocks
+    # Train on multiple stocks
     results = train_on_multiple_stocks(tickers, start_date, end_date, episodes_per_stock)
 
     # Print summary
     print("\nTraining Summary:")
-    for ticker, (_, metrics) in results.items():
+    for ticker, (agent, metrics) in results.items():
         print(f"\n{ticker}:")
         for metric, value in metrics.items():
             print(f"  {metric}: {value:.2f}")
 
+    # Train single agent on first stock
+    first_ticker = tickers[0]
+    print(f"\nTraining single agent on {first_ticker}...")
+    agent = train_agent(
+        ticker=first_ticker,
+        start_date=start_date,
+        end_date=end_date,
+        n_episodes=1000,
+        batch_size=32,
+    )
+
+    # Evaluate agent
+    print("\nEvaluating agent...")
+    eval_start_date = "2024-01-01"
+    eval_end_date = "2024-03-01"
+    eval_metrics = evaluate_agent(
+        agent=agent, ticker=first_ticker, start_date=eval_start_date, end_date=eval_end_date
+    )
+    print("Evaluation metrics:", eval_metrics)
+
+    # Test agent
+    print("\nTesting agent...")
+    test_start_date = "2024-03-02"
+    test_end_date = "2024-03-31"
+    test_metrics = test_agent(
+        agent=agent, ticker=first_ticker, start_date=test_start_date, end_date=test_end_date
+    )
+    print("Test metrics:", test_metrics)
+
+
+if __name__ == "__main__":
     main()

@@ -1,18 +1,20 @@
 import numpy as np
 import pandas as pd
 import pytest
+from pathlib import Path
+from typing import Dict, List, Any
 
 from src.utils.visualization import TradingVisualizer
 
 
 @pytest.fixture
-def visualizer():
+def visualizer() -> TradingVisualizer:
     """Create a TradingVisualizer instance"""
     return TradingVisualizer()
 
 
 @pytest.fixture
-def sample_history():
+def sample_history() -> Dict[str, List[float]]:
     """Create sample training history data"""
     return {
         "episode_rewards": [10, 20, 15, 25, 30],
@@ -23,7 +25,7 @@ def sample_history():
 
 
 @pytest.fixture
-def sample_trades():
+def sample_trades() -> List[Dict[str, Any]]:
     """Create sample trade data"""
     return [
         {"step": 1, "action": "buy", "price": 105, "shares": 10},
@@ -33,7 +35,7 @@ def sample_trades():
 
 
 @pytest.fixture
-def sample_data():
+def sample_data() -> pd.DataFrame:
     """Create sample price and indicator data"""
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
     df = pd.DataFrame(
@@ -56,35 +58,51 @@ def sample_data():
     return df
 
 
-def test_plot_training_history(visualizer, sample_history, tmp_path):
+def test_plot_training_history(
+    visualizer: TradingVisualizer, sample_history: Dict[str, List[float]], tmp_path: Path
+) -> None:
     """Test training history plotting"""
     save_path = tmp_path / "training_history.html"
     visualizer.plot_training_history(sample_history, str(save_path))
     assert save_path.exists()
 
 
-def test_plot_trading_session(visualizer, sample_data, sample_trades, tmp_path):
+def test_plot_trading_session(
+    visualizer: TradingVisualizer,
+    sample_data: pd.DataFrame,
+    sample_trades: List[Dict[str, Any]],
+    tmp_path: Path,
+) -> None:
     """Test trading session plotting"""
     save_path = tmp_path / "trading_session.html"
     visualizer.plot_trading_session(sample_data, sample_trades, str(save_path))
     assert save_path.exists()
 
 
-def test_plot_technical_indicators(visualizer, sample_data, tmp_path):
+def test_plot_technical_indicators(
+    visualizer: TradingVisualizer, sample_data: pd.DataFrame, tmp_path: Path
+) -> None:
     """Test technical indicators plotting"""
     save_path = tmp_path / "technical_indicators.html"
     visualizer.plot_technical_indicators(sample_data, str(save_path))
     assert save_path.exists()
 
 
-def test_plot_portfolio_metrics(visualizer, sample_history, tmp_path):
+def test_plot_portfolio_metrics(
+    visualizer: TradingVisualizer, sample_history: Dict[str, List[float]], tmp_path: Path
+) -> None:
     """Test portfolio metrics plotting"""
     save_path = tmp_path / "portfolio_metrics.html"
     visualizer.plot_portfolio_metrics(sample_history, str(save_path))
     assert save_path.exists()
 
 
-def test_visualization_no_save(visualizer, sample_data, sample_history, sample_trades):
+def test_visualization_no_save(
+    visualizer: TradingVisualizer,
+    sample_data: pd.DataFrame,
+    sample_history: Dict[str, List[float]],
+    sample_trades: List[Dict[str, Any]],
+) -> None:
     """Test plotting without saving"""
     # These should not raise any errors
     visualizer.plot_training_history(sample_history)
@@ -93,7 +111,11 @@ def test_visualization_no_save(visualizer, sample_data, sample_history, sample_t
     visualizer.plot_portfolio_metrics(sample_history)
 
 
-def test_custom_colors(visualizer, sample_data, sample_trades):
+def test_custom_colors(
+    visualizer: TradingVisualizer,
+    sample_data: pd.DataFrame,
+    sample_trades: List[Dict[str, Any]],
+) -> None:
     """Test custom color settings"""
     custom_colors = {
         "price": "purple",
@@ -115,7 +137,7 @@ def test_custom_colors(visualizer, sample_data, sample_trades):
     assert visualizer.colors["sell"] == "red"
 
 
-def test_custom_layout(visualizer, sample_data):
+def test_custom_layout(visualizer: TradingVisualizer, sample_data: pd.DataFrame) -> None:
     """Test custom layout settings"""
     custom_layout = {
         "width": 1200,
@@ -135,7 +157,9 @@ def test_custom_layout(visualizer, sample_data):
     assert visualizer.layout["height"] == 800
 
 
-def test_performance_metrics(visualizer, sample_history):
+def test_performance_metrics(
+    visualizer: TradingVisualizer, sample_history: Dict[str, List[float]]
+) -> None:
     """Test performance metrics calculation"""
     metrics = visualizer.calculate_performance_metrics(sample_history)
 
@@ -152,12 +176,12 @@ def test_performance_metrics(visualizer, sample_history):
     assert isinstance(metrics["win_rate"], float)
 
 
-def test_invalid_data_handling(visualizer):
+def test_invalid_data_handling(visualizer: TradingVisualizer) -> None:
     """Test handling of invalid data"""
     # Test with empty data
-    empty_data = pd.DataFrame()
-    empty_trades = []
-    empty_history = {}
+    empty_data: pd.DataFrame = pd.DataFrame()
+    empty_trades: List[Dict[str, Any]] = []
+    empty_history: Dict[str, List[float]] = {}
 
     # These should not raise errors
     visualizer.plot_trading_session(empty_data, empty_trades)
@@ -166,7 +190,9 @@ def test_invalid_data_handling(visualizer):
     visualizer.plot_portfolio_metrics(empty_history)
 
 
-def test_missing_columns_handling(visualizer, sample_data):
+def test_missing_columns_handling(
+    visualizer: TradingVisualizer, sample_data: pd.DataFrame
+) -> None:
     """Test handling of missing columns"""
     # Remove some columns
     incomplete_data = sample_data.drop(columns=["SMA_20", "RSI"])

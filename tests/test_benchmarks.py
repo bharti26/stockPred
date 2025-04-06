@@ -14,13 +14,16 @@ def sample_stock_data():
     n_samples = len(dates)
 
     # Create base data
-    data = pd.DataFrame({
-        "Open": np.random.uniform(100, 200, n_samples),
-        "High": np.random.uniform(110, 210, n_samples),
-        "Low": np.random.uniform(90, 190, n_samples),
-        "Close": np.random.uniform(100, 200, n_samples),
-        "Volume": np.random.randint(1000000, 10000000, n_samples),
-    }, index=dates)
+    data = pd.DataFrame(
+        {
+            "Open": np.random.uniform(100, 200, n_samples),
+            "High": np.random.uniform(110, 210, n_samples),
+            "Low": np.random.uniform(90, 190, n_samples),
+            "Close": np.random.uniform(100, 200, n_samples),
+            "Volume": np.random.randint(1000000, 10000000, n_samples),
+        },
+        index=dates,
+    )
 
     # Add normalized features
     for col in ["Open", "High", "Low", "Close", "Volume"]:
@@ -75,6 +78,7 @@ def test_data_preprocessing_performance(benchmark, stock_data, sample_stock_data
 
 def test_env_reset_performance(benchmark, trading_env):
     """Benchmark environment reset performance"""
+
     def reset_env():
         trading_env.reset()
 
@@ -106,10 +110,10 @@ def test_agent_remember_performance(benchmark, dqn_agent):
     """Benchmark agent memory storage performance"""
     state = dqn_agent.reset()
     action = dqn_agent.act(state)
-    next_state, reward, done, _ = dqn_agent.step(action)
+    next_state, reward, terminated, truncated, info = dqn_agent.step(action)
 
     def store_experience():
-        dqn_agent.remember(state, action, reward, next_state, done)
+        dqn_agent.remember(state, action, reward, next_state, terminated)
 
     benchmark(store_experience)
 
@@ -120,8 +124,8 @@ def test_agent_replay_performance(benchmark, dqn_agent):
     for _ in range(dqn_agent.batch_size):
         state = dqn_agent.reset()
         action = dqn_agent.act(state)
-        next_state, reward, done, _ = dqn_agent.step(action)
-        dqn_agent.remember(state, action, reward, next_state, done)
+        next_state, reward, terminated, truncated, info = dqn_agent.step(action)
+        dqn_agent.remember(state, action, reward, next_state, terminated)
 
     def replay():
         dqn_agent.replay()
@@ -131,14 +135,16 @@ def test_agent_replay_performance(benchmark, dqn_agent):
 
 def test_full_episode_performance(benchmark, trading_env, dqn_agent):
     """Benchmark full episode performance"""
+
     def run_episode():
         state = trading_env.reset()
         done = False
         while not done:
             action = dqn_agent.act(state)
-            next_state, reward, done, _ = trading_env.step(action)
-            dqn_agent.remember(state, action, reward, next_state, done)
+            next_state, reward, terminated, truncated, info = trading_env.step(action)
+            dqn_agent.remember(state, action, reward, next_state, terminated)
             state = next_state
+            done = terminated or truncated
             if len(dqn_agent.memory) >= dqn_agent.batch_size:
                 dqn_agent.replay()
 
@@ -147,8 +153,9 @@ def test_full_episode_performance(benchmark, trading_env, dqn_agent):
 
 def test_target_update_performance(benchmark, dqn_agent):
     """Benchmark target network update performance"""
+
     def update_target():
-        dqn_agent.update_target_network()
+        dqn_agent.update_target_model()
 
     benchmark(update_target)
 
@@ -167,8 +174,8 @@ def test_save_load_performance(benchmark, dqn_agent, tmp_path):
 def test_batch_processing_performance(benchmark, dqn_agent):
     """Benchmark batch processing performance"""
     batch_size = 32
-    states = np.random.random((batch_size, 16))
-    next_states = np.random.random((batch_size, 16))
+    states = np.random.random((batch_size, dqn_agent.state_size))
+    next_states = np.random.random((batch_size, dqn_agent.state_size))
 
     def process_batch():
         states_tensor = torch.FloatTensor(states)
@@ -177,4 +184,5 @@ def test_batch_processing_performance(benchmark, dqn_agent):
         with torch.no_grad():
             dqn_agent.policy_net(states_tensor)
             dqn_agent.target_net(next_states_tensor)
+
     benchmark(process_batch)

@@ -4,7 +4,6 @@ import argparse
 import os
 import platform
 import socket
-import time
 import traceback
 from typing import Dict, List, Optional, Tuple, TypeVar, cast
 
@@ -17,6 +16,7 @@ from dash.dependencies import Input, Output, State
 from gymnasium.spaces import Discrete
 from plotly.subplots import make_subplots
 from typing_extensions import Protocol
+import numpy as np
 
 from src.data.realtime_data import RealTimeStockData
 from src.env.trading_env import StockTradingEnv
@@ -33,7 +33,7 @@ app = dash.Dash(
 )
 
 # Add custom CSS
-app.index_string = '''
+app.index_string = """
 <!DOCTYPE html>
 <html>
     <head>
@@ -78,7 +78,7 @@ app.index_string = '''
         </footer>
     </body>
 </html>
-'''
+"""
 
 # Set server reference for gunicorn and other WSGI servers
 server = app.server
@@ -105,6 +105,20 @@ def debug_info() -> flask.Response:
     return flask.Response(response=flask.json.dumps(info), status=200, mimetype="application/json")
 
 
+# Define ticker-model mapping
+TICKER_MODEL_MAPPING = {
+    "AAPL": "dqn_AAPL",  # Apple
+    "MSFT": "dqn_MSFT",  # Microsoft
+    "GOOGL": "dqn_GOOGL",  # Google
+    "AMZN": "dqn_AMZN",  # Amazon
+    "META": "dqn_META",  # Meta
+    "TSLA": "dqn_TSLA",  # Tesla
+    "NVDA": "dqn_NVDA",  # NVIDIA
+    "JPM": "dqn_JPM",  # JPMorgan
+    "V": "dqn_V",  # Visa
+    "WMT": "dqn_WMT",  # Walmart
+}
+
 # Define layout
 app.layout = html.Div(
     [
@@ -123,25 +137,34 @@ app.layout = html.Div(
                 html.Div(
                     [
                         html.Label("Select Ticker:"),
-                        dcc.Input(id="ticker-input", type="text", value="AAPL"),
+                        dcc.Dropdown(
+                            id="ticker-input",
+                            options=[
+                                {"label": ticker, "value": ticker}
+                                for ticker in TICKER_MODEL_MAPPING
+                            ],
+                            value="AAPL",
+                        ),
                         html.Button("Load Ticker", id="ticker-button", n_clicks=0),
                     ],
                     className="control-item",
                 ),
-                # Model selection
+                # Model selection (hidden by default, shown only for custom model selection)
                 html.Div(
                     [
                         html.Label("Select Model:"),
                         dcc.Dropdown(
                             id="model-dropdown",
                             options=[
-                                {"label": "DQN Default", "value": "dqn_default"},
-                                {"label": "DQN Optimized", "value": "dqn_optimized"},
+                                {"label": f"{ticker} Model", "value": model_name}
+                                for ticker, model_name in TICKER_MODEL_MAPPING.items()
                             ],
-                            value="dqn_default",
+                            value=None,  # No default value, will be set based on ticker
+                            style={"display": "none"},  # Hide by default
                         ),
                     ],
                     className="control-item",
+                    id="model-selection-container",
                 ),
             ],
             className="control-panel",
@@ -194,9 +217,14 @@ class DataStore:
         self.data_source: Optional[RealTimeStockData] = None
         self.agent: Optional[DQNAgent] = None
         self.trades: List[Dict] = []
+        self.ticker_model_mapping = TICKER_MODEL_MAPPING
 
-    def initialize(self, ticker: str, model_name: str) -> None:
+    def initialize(self, ticker: str, model_name: Optional[str] = None) -> None:
         """Initialize data store with ticker and model."""
+        # Use predefined model for ticker if no model is specified
+        if model_name is None and ticker in self.ticker_model_mapping:
+            model_name = self.ticker_model_mapping[ticker]
+
         if self.ticker == ticker and self.model_name == model_name:
             return  # Already initialized with these parameters
 
@@ -207,46 +235,90 @@ class DataStore:
         # Initialize new data source
         self.ticker = ticker
         self.model_name = model_name
+        initial_data = None  # Initialize initial_data to None
+        
         try:
+            # Initialize data source
             self.data_source = RealTimeStockData(ticker)
-            self.data_source.start_streaming()
 
-            # Wait for initial data
-            max_retries = 10
-            retries = 0
-            while self.data_source.get_latest_data() is None and retries < max_retries:
-                time.sleep(0.5)
-                retries += 1
+            # Try to fetch initial data
+            try:
+                initial_data = self.data_source.get_latest_data()
+                if initial_data is None or initial_data.empty:
+                    raise ValueError(f"Failed to fetch initial data for {ticker}")
+            except Exception as e:
+                print(f"Warning: Could not fetch initial data: {str(e)}")
+                # Continue anyway to allow the dashboard to show error state
+
+            # Start streaming
+            try:
+                self.data_source.start_streaming()
+                print(f"Started streaming {ticker} data at {self.data_source.interval} intervals")
+            except Exception as e:
+                print(f"Warning: Could not start streaming: {str(e)}")
+                # Continue anyway to allow the dashboard to show error state
 
             # Initialize trading environment and agent
-            df = self.data_source.get_latest_data()
-            if df is None:
-                raise ValueError(
-                    f"Failed to get initial data for {ticker} after {max_retries} retries"
-                )
-
-            env = StockTradingEnv(df)
-            if env.observation_space.shape is None:
-                raise ValueError("Observation space shape is None")
-            state_dim = int(env.observation_space.shape[0])
-            action_space = cast(Discrete, env.action_space)
-            action_dim = int(action_space.n)
-            self.agent = DQNAgent(state_dim, action_dim)
-
-            # Create models directory if it doesn't exist
-            os.makedirs("models", exist_ok=True)
-
             try:
-                self.agent.load(f"models/{model_name}.pth")
-                print(f"Loaded model from models/{model_name}.pth")
-            except FileNotFoundError:
-                print(f"Model file not found: models/{model_name}.pth")
-                print("Using untrained agent")
+                # Create models directory if it doesn't exist
+                os.makedirs("models", exist_ok=True)
+
+                # Initialize agent with default dimensions if we don't have data yet
+                if initial_data is None or initial_data.empty:
+                    print("Initializing agent with default dimensions")
+                    state_dim = 16  # Default state dimension to match model
+                    action_dim = 3  # Default action dimension (buy, sell, hold)
+                    self.agent = DQNAgent(state_dim, action_dim)
+                else:
+                    # Initialize with actual data dimensions
+                    env = StockTradingEnv(initial_data)
+                    if env.observation_space.shape is None:
+                        raise ValueError("Observation space shape is None")
+                    state_dim = int(env.observation_space.shape[0])
+                    action_space = cast(Discrete, env.action_space)
+                    action_dim = int(action_space.n)
+                    self.agent = DQNAgent(state_dim, action_dim)
+
+                # Try to load the model if specified
+                if model_name:
+                    model_path = f"models/{model_name}.pth"
+                    if os.path.exists(model_path):
+                        try:
+                            # Ensure agent dimensions match model dimensions
+                            if state_dim != 16:  # Model expects 16 dimensions
+                                print("Adjusting agent dimensions to match model")
+                                self.agent = DQNAgent(16, action_dim)
+                            self.agent.load(model_path)
+                            print(f"Loaded model from {model_path}")
+                        except Exception as e:
+                            print(f"Warning: Failed to load model from {model_path}: {str(e)}")
+                            print("Using untrained agent")
+                    else:
+                        print(f"Model file not found: {model_path}")
+                        print("Using untrained agent")
+                        # Create a new model file with the current agent state
+                        try:
+                            self.agent.save(model_path)
+                            print(f"Created new model file at {model_path}")
+                        except Exception as e:
+                            print(f"Warning: Failed to create model file: {str(e)}")
+            except Exception as e:
+                print(f"Warning: Could not initialize trading environment: {str(e)}")
+                # Initialize with default dimensions as fallback
+                state_dim = 16  # Default to match model dimensions
+                action_dim = 3
+                self.agent = DQNAgent(state_dim, action_dim)
 
             self.trades = []
         except Exception as e:
             print(f"Error initializing data store: {e}")
             print(traceback.format_exc())
+            # Reset state on error
+            self.ticker = None
+            self.model_name = None
+            self.data_source = None
+            self.agent = None
+            self.trades = []
             raise
 
 
@@ -290,100 +362,140 @@ def create_top_stocks_table() -> html.Div:
         return html.Div([html.P("No top stocks data available")])
 
     # Create table header
-    header = html.Tr([
-        html.Th("Symbol"),
-        html.Th("Name"),
-        html.Th("Price"),
-        html.Th("Change"),
-        html.Th("Volume"),
-    ])
+    header = html.Tr(
+        [
+            html.Th("Symbol"),
+            html.Th("Name"),
+            html.Th("Price"),
+            html.Th("Change"),
+            html.Th("Volume"),
+        ]
+    )
 
     # Create table rows
     rows = []
     for stock in top_stocks:
         change_class = "positive-change" if stock["change"] >= 0 else "negative-change"
-        rows.append(html.Tr([
-            html.Td(stock["symbol"]),
-            html.Td(stock["name"]),
-            html.Td(f"${stock['price']:.2f}"),
-            html.Td(
-                f"{stock['change']:.2f} ({stock['change_percent']:.2f}%)",
-                className=change_class
-            ),
-            html.Td(f"{stock['volume']:,}"),
-        ]))
-
-    return html.Div([
-        html.Table(
-            [header] + rows,
-            className="top-stocks-table"
+        rows.append(
+            html.Tr(
+                [
+                    html.Td(stock["symbol"]),
+                    html.Td(stock["name"]),
+                    html.Td(f"${stock['price']:.2f}"),
+                    html.Td(
+                        f"{stock['change']:.2f} ({stock['change_percent']:.2f}%)",
+                        className=change_class,
+                    ),
+                    html.Td(f"{stock['volume']:,}"),
+                ]
+            )
         )
-    ])
+
+    return html.Div([html.Table([header] + rows, className="top-stocks-table")])
 
 
 def update_dashboard(
-    n_clicks: int, n_intervals: int, ticker: Optional[str], model_name: str
+    n_clicks: int, n_intervals: int, ticker: Optional[str], model_name: Optional[str]
 ) -> Tuple[go.Figure, List[html.Div], List[html.Div], str, Dict[str, str], html.Div]:
     """Update dashboard with latest data and predictions."""
     try:
         if ticker is None or not ticker.strip():
             raise ValueError("Please enter a valid ticker symbol")
 
-        # Initialize data store
+        # Initialize data store with ticker and optional model
         try:
             data_store.initialize(ticker, model_name)
         except Exception as e:
-            raise ValueError(f"Failed to initialize data store: {str(e)}")
+            error_msg = f"Failed to initialize data store: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         if data_store.data_source is None:
-            raise ValueError("Data source not initialized")
+            error_msg = "Data source not initialized"
+            print(error_msg)
+            return create_error_state(error_msg)
 
         # Get latest data
-        df = data_store.data_source.get_latest_data()
-        if df is None or df.empty:
-            raise ValueError(f"No data available for {ticker}")
+        try:
+            df = data_store.data_source.get_latest_data()
+            if df is None or df.empty:
+                error_msg = f"No data available for {ticker}"
+                print(error_msg)
+                return create_error_state(error_msg)
+        except Exception as e:
+            error_msg = f"Error fetching data: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         # Create trading environment
-        env = StockTradingEnv(df)
-        state = env.reset()
+        try:
+            env = StockTradingEnv(df)
+            state = env.reset()
+        except Exception as e:
+            error_msg = f"Error creating trading environment: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         if data_store.agent is None:
-            raise ValueError("Trading agent not initialized")
+            error_msg = "Trading agent not initialized"
+            print(error_msg)
+            return create_error_state(error_msg)
 
         # Get action from agent
         try:
             action = data_store.agent.act(state[0])
         except Exception as e:
-            raise ValueError(f"Error getting agent action: {str(e)}")
+            error_msg = f"Error getting agent action: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         # Execute trade
         try:
             next_state, reward, done, info, _ = env.step(action)
         except Exception as e:
-            raise ValueError(f"Error executing trade: {str(e)}")
+            error_msg = f"Error executing trade: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         # Update agent
-        experience = Experience(
-            state=state[0], action=action, reward=reward, next_state=next_state[0], done=done
-        )
-        data_store.agent.remember(
-            experience.state,
-            experience.action,
-            experience.reward,
-            experience.next_state,
-            experience.done
-        )
-        data_store.agent.replay()
+        try:
+            experience = Experience(
+                state=state[0], action=action, reward=reward, next_state=next_state[0], done=done
+            )
+            data_store.agent.remember(
+                experience.state,
+                experience.action,
+                experience.reward,
+                experience.next_state,
+                experience.done,
+            )
+            data_store.agent.replay()
+        except Exception as e:
+            error_msg = f"Error updating agent: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         # Store trade
-        data_store.trades.append(
-            {
-                "time": pd.Timestamp.now(),
-                "action": "buy" if action == 1 else "sell",
-                "price": df["Close"].iloc[-1],
-                "shares": 100,
-            }
-        )
+        try:
+            data_store.trades.append(
+                {
+                    "time": pd.Timestamp.now(),
+                    "action": "buy" if action == 1 else "sell",
+                    "price": df["Close"].iloc[-1],
+                    "shares": 100,
+                }
+            )
+        except Exception as e:
+            error_msg = f"Error storing trade: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         # Create visualizations
         try:
@@ -392,7 +504,10 @@ def update_dashboard(
             trade_history = create_trade_history(data_store.trades)
             top_stocks_table = create_top_stocks_table()
         except Exception as e:
-            raise ValueError(f"Error creating visualizations: {str(e)}")
+            error_msg = f"Error creating visualizations: {str(e)}"
+            print(error_msg)
+            print(traceback.format_exc())
+            return create_error_state(error_msg)
 
         return (
             fig,
@@ -404,26 +519,48 @@ def update_dashboard(
         )
 
     except Exception as e:
-        print(f"Error updating dashboard: {e}")
+        error_msg = f"Unexpected error: {str(e)}"
+        print(error_msg)
         print(traceback.format_exc())
-        empty_fig = go.Figure()
-        empty_fig.add_annotation(
-            text=f"Error: {str(e)}",
-            xref="paper",
-            yref="paper",
-            x=0.5,
-            y=0.5,
-            showarrow=False,
-            font=dict(size=14, color="red"),
-        )
-        return (
-            empty_fig,
-            [html.Div([html.P(f"Error: {str(e)}", style={"color": "red"})])],
-            [html.Div([html.P("No trade history available")])],
-            "Error",
-            {"color": "red", "fontWeight": "bold"},
-            html.Div([html.P("No top stocks data available")]),
-        )
+        return create_error_state(error_msg)
+
+
+def create_error_state(
+    error_msg: str,
+) -> Tuple[go.Figure, List[html.Div], List[html.Div], str, Dict[str, str], html.Div]:
+    """Create error state for dashboard."""
+    empty_fig = go.Figure()
+    empty_fig.add_annotation(
+        text=f"Error: {error_msg}",
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        y=0.5,
+        showarrow=False,
+        font={"size": 14, "color": "red"},
+    )
+
+    # Create error message with more details
+    error_details = html.Div([
+        html.H4("Error Details", style={"color": "red"}),
+        html.P(error_msg, style={"color": "red"}),
+        html.P("Please try the following:", style={"marginTop": "10px"}),
+        html.Ul([
+            html.Li("Check if the ticker symbol is correct"),
+            html.Li("Verify your internet connection"),
+            html.Li("Try again in a few moments"),
+            html.Li("Contact support if the issue persists")
+        ])
+    ])
+
+    return (
+        empty_fig,
+        [error_details],
+        [html.Div([html.P("No trade history available")])],
+        "Error",
+        {"color": "red", "fontWeight": "bold"},
+        html.Div([html.P("No top stocks data available")]),
+    )
 
 
 # Apply the callback with type checking
@@ -485,36 +622,53 @@ def create_chart(df: pd.DataFrame, trades: List[Dict]) -> go.Figure:
 
 def create_metrics(df: pd.DataFrame, trades: List[Dict]) -> List[html.Div]:
     """Create performance metrics display."""
-    if len(df) < 2:
-        return [html.P("Insufficient data for metrics")]
-
-    # Calculate basic metrics
-    current_price = float(df.iloc[-1]["Close"])
-    prev_price = float(df.iloc[-2]["Close"])
-    price_change = current_price - prev_price
-    price_change_pct = (price_change / prev_price) * 100
-
-    # Calculate trade metrics
-    total_trades = len(trades)
-    buy_trades = sum(1 for t in trades if t["action"] == "buy")
-    sell_trades = sum(1 for t in trades if t["action"] == "sell")
-
-    metrics = [
-        html.Div([html.H4("Current Price"), html.P(f"${current_price:.2f}")]),
-        html.Div(
-            [html.H4("Price Change"), html.P(f"${price_change:.2f} ({price_change_pct:.2f}%)")]
-        ),
-        html.Div(
-            [
-                html.H4("Trade Statistics"),
+    if df.empty:
+        return [html.Div([html.P("No data available for metrics")])]
+    
+    try:
+        # Calculate basic metrics
+        latest_price = df["Close"].iloc[-1]
+        price_change = latest_price - df["Close"].iloc[0]
+        price_change_pct = (price_change / df["Close"].iloc[0]) * 100
+        
+        # Calculate trade metrics
+        total_trades = len(trades)
+        winning_trades = sum(1 for trade in trades if trade.get("profit", 0) > 0)
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        
+        # Calculate profit metrics
+        total_profit = sum(trade.get("profit", 0) for trade in trades)
+        
+        # Calculate risk metrics
+        returns = df["Close"].pct_change().dropna()
+        volatility = returns.std() * np.sqrt(252)  # Annualized volatility
+        
+        # Create metric cards
+        metrics = [
+            html.Div([
+                html.H4("Price Performance"),
+                html.P(f"Current Price: ${latest_price:.2f}"),
+                html.P(f"Price Change: {price_change:+.2f} ({price_change_pct:+.2f}%)")
+            ]),
+            
+            html.Div([
+                html.H4("Trading Performance"),
                 html.P(f"Total Trades: {total_trades}"),
-                html.P(f"Buy Trades: {buy_trades}"),
-                html.P(f"Sell Trades: {sell_trades}"),
-            ]
-        ),
-    ]
-
-    return metrics
+                html.P(f"Win Rate: {win_rate:.1f}%"),
+                html.P(f"Total Profit: ${total_profit:+.2f}")
+            ]),
+            
+            html.Div([
+                html.H4("Risk Metrics"),
+                html.P(f"Volatility: {volatility:.2%}")
+            ])
+        ]
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"Error creating metrics: {e}")
+        return [html.Div([html.P("Error calculating metrics")])]
 
 
 def create_trade_history(trades: List[Dict]) -> List[html.Div]:
@@ -536,6 +690,61 @@ def create_trade_history(trades: List[Dict]) -> List[html.Div]:
         )
 
     return trade_elements
+
+
+# Add new callback for model selection visibility
+@app.callback(
+    Output("model-selection-container", "style"),
+    [Input("ticker-input", "value")],
+)
+def update_model_selection_visibility(ticker: str) -> Dict[str, str]:
+    """Show/hide model selection based on ticker."""
+    if ticker in TICKER_MODEL_MAPPING:
+        return {"display": "none"}  # Hide for predefined tickers
+    return {"display": "block"}  # Show for custom tickers
+
+
+def calculate_max_drawdown(prices: pd.Series) -> float:
+    """Calculate maximum drawdown from price series.
+
+    Args:
+        prices: Series of prices
+
+    Returns:
+        Maximum drawdown as a percentage
+    """
+    if len(prices) < 2:
+        return 0.0
+
+    # Calculate cumulative maximum
+    cummax = prices.expanding().max()
+    
+    # Calculate drawdown
+    drawdown = (prices - cummax) / cummax
+    
+    # Return maximum drawdown
+    return abs(drawdown.min())
+
+def calculate_sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.02) -> float:
+    """Calculate Sharpe ratio from returns series.
+
+    Args:
+        returns: Series of returns
+        risk_free_rate: Annual risk-free rate (default: 2%)
+
+    Returns:
+        Sharpe ratio
+    """
+    if len(returns) < 2:
+        return 0.0
+
+    # Calculate excess returns
+    excess_returns = returns - (risk_free_rate / 252)  # Daily risk-free rate
+    
+    # Calculate Sharpe ratio
+    sharpe = np.sqrt(252) * excess_returns.mean() / excess_returns.std()
+    
+    return sharpe if not np.isnan(sharpe) else 0.0
 
 
 if __name__ == "__main__":

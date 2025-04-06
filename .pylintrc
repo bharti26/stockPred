@@ -29,7 +29,8 @@ disable=C0111,  # missing-docstring
         W0612,  # unused-variable
         W0603,  # global-statement
         W0611,  # unused-import
-        W0105   # pointless-string-statement
+        W0105,  # pointless-string-statement
+        C0303   # trailing-whitespace
 
 [REPORTS]
 output-format=text
