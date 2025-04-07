@@ -1,11 +1,14 @@
 import numpy as np
 from typing import Dict, List, Optional
-
+import logging
+from pathlib import Path
 
 from src.env.trading_env import StockTradingEnv
-from src.models.dqn_agent import DQNAgent, Experience
+from src.models.dqn_agent import DQNAgent, DQNAgentConfig, Experience
 from src.utils.visualization import TradingVisualizer
 
+# Configure logger
+logger = logging.getLogger(__name__)
 
 class StockTrader:
     """
@@ -13,7 +16,7 @@ class StockTrader:
 
     Attributes:
         agent (DQNAgent): The DQN agent that learns to trade
-        env (StockTradingEnv): The trading environmen
+        env (StockTradingEnv): The trading environment
         visualizer (TradingVisualizer): Visualization tool for training progress
         history (dict): Dictionary to store training metrics
     """
@@ -23,7 +26,7 @@ class StockTrader:
         Initialize the stock trader.
 
         Args:
-            env: The trading environmen
+            env: The trading environment
             agent: Optional pre-trained agent. If None, a new agent will be created.
         """
         self.env = env
@@ -34,9 +37,27 @@ class StockTrader:
         # Use getattr to safely get the 'n' attribute or default to 0
         action_size = getattr(env.action_space, "n", 0)
 
-        self.agent = agent if agent else DQNAgent(state_size, action_size)
+        if agent is None:
+            # Create agent config
+            config = DQNAgentConfig(
+                state_size=state_size,
+                action_size=action_size
+            )
+            self.agent = DQNAgent(config)
+        else:
+            self.agent = agent
+            
         self.visualizer = TradingVisualizer()
         self.history: Dict[str, List[float]] = {"episode_rewards": [], "portfolio_values": []}
+        
+        # Create results directory if it doesn't exist
+        Path("results").mkdir(exist_ok=True)
+        
+        # Configure file handler for logging
+        file_handler = logging.FileHandler("results/training.log")
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(file_handler)
+        logger.setLevel(logging.INFO)
 
     def train(
         self, episodes: int, batch_size: int = 32, render_interval: int = 10
@@ -52,13 +73,16 @@ class StockTrader:
         Returns:
             Dictionary containing training history
         """
-        print(f"Starting training for {episodes} episodes...")
+        logger.info(f"Starting training for {episodes} episodes...")
+        logger.info(f"Initial epsilon: {self.agent.epsilon:.4f}")
+        logger.info(f"Initial portfolio value: ${self.env.state.balance:.2f}")
 
         for episode in range(episodes):
             # Initialize episode
             state = self.env.reset()[0]
             episode_reward = 0.0
             done = False
+            steps = 0
 
             # Run episode
             while not done:
@@ -70,15 +94,19 @@ class StockTrader:
                 # Store and train
                 self.agent.remember(Experience(state, action, reward, next_state, done))
                 if len(self.agent.memory) > batch_size:
-                    self.agent.replay(batch_size)
+                    loss = self.agent.replay(batch_size)
+                    if steps % 10 == 0:  # Log loss every 10 steps
+                        logger.debug(f"Episode {episode}, Step {steps}: Loss = {loss:.4f}")
 
                 # Update state
                 state = next_state
                 episode_reward += reward
+                steps += 1
 
             # Update target model
             if episode % 10 == 0:
                 self.agent.update_target_model()
+                logger.info(f"Updated target model at episode {episode}")
 
             # Update metrics
             self.history["episode_rewards"].append(episode_reward)
@@ -88,11 +116,12 @@ class StockTrader:
             # Log progress
             if episode % render_interval == 0:
                 avg_reward = np.mean(self.history["episode_rewards"][-render_interval:])
-                print(f"Episode: {episode}/{episodes}")
-                print(f"Average Reward (last {render_interval} episodes): {avg_reward:.2f}")
-                print(f"Portfolio Value: ${self.history['portfolio_values'][-1]:.2f}")
-                print(f"Epsilon: {self.agent.epsilon:.4f}")
-                print("-" * 50)
+                logger.info(f"Episode: {episode}/{episodes}")
+                logger.info(f"Average Reward (last {render_interval} episodes): {avg_reward:.2f}")
+                logger.info(f"Portfolio Value: ${self.history['portfolio_values'][-1]:.2f}")
+                logger.info(f"Epsilon: {self.agent.epsilon:.4f}")
+                logger.info(f"Steps in episode: {steps}")
+                logger.info("-" * 50)
 
                 # Update visualizations
                 self.visualizer.plot_training_history(
@@ -100,7 +129,9 @@ class StockTrader:
                     save_path="results/training_progress.html"
                 )
 
-        print("Training completed!")
+        logger.info("Training completed!")
+        logger.info(f"Final epsilon: {self.agent.epsilon:.4f}")
+        logger.info(f"Final portfolio value: ${self.history['portfolio_values'][-1]:.2f}")
         return self.history
 
     def save_agent(self, filepath: str) -> None:

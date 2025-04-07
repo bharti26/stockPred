@@ -33,8 +33,17 @@ def train_on_multiple_stocks(
         Dictionary containing training metrics
     """
     try:
+        # Initialize data handler for first ticker
+        stock_data = StockData(tickers[0], "2020-01-01", "2023-12-31")
+        stock_data.fetch_data()
+        stock_data.add_technical_indicators()
+        stock_data.preprocess_data()
+        
+        if stock_data.data is None:
+            raise ValueError("Failed to fetch and process stock data")
+            
         # Initialize environment and agent
-        env = StockTradingEnv(tickers[0], initial_balance=initial_balance)
+        env = StockTradingEnv(stock_data.data, initial_balance=initial_balance)
         state_size = env.observation_space.shape[0]
         action_size = env.action_space.n
         
@@ -49,8 +58,18 @@ def train_on_multiple_stocks(
         trainer = StockTrader(env, agent)
         
         # Train on each stock
-        for ticker in tickers:
-            env.set_ticker(ticker)
+        for ticker in tickers[1:]:  # Skip first ticker as we already have its data
+            stock_data = StockData(ticker, "2020-01-01", "2023-12-31")
+            stock_data.fetch_data()
+            stock_data.add_technical_indicators()
+            stock_data.preprocess_data()
+            
+            if stock_data.data is None:
+                logger.warning(f"Failed to fetch data for {ticker}, skipping...")
+                continue
+                
+            env = StockTradingEnv(stock_data.data, initial_balance=initial_balance)
+            trainer.env = env
             trainer.train(num_episodes)
             
         # Save the trained model
