@@ -1,107 +1,81 @@
-from typing import Any, Dict, List, Tuple
-
+import logging
+from typing import Dict, List, Any
 import numpy as np
 
 from src.env.trading_env import StockTradingEnv
 from src.models.dqn_agent import DQNAgent
 from src.utils.visualization import TradingVisualizer
 
+# Configure logger
+logger = logging.getLogger(__name__)
 
-class StockTester:
-    """A class to test and evaluate the trained DQN agent's performance.
-
-    Attributes:
-        agent (DQNAgent): The trained DQN agent
-        env (StockTradingEnv): The trading environment with test data
-        visualizer (TradingVisualizer): Visualization tool for test results
-    """
-
-    def __init__(self, env: StockTradingEnv, agent: DQNAgent):
-        """Initialize the stock tester.
-
+class Tester:
+    """Class for testing trained models."""
+    
+    def __init__(self, env: StockTradingEnv, agent: DQNAgent) -> None:
+        """Initialize tester.
+        
         Args:
-            env: The trading environment with test data
-            agent: The trained agent to evaluate
+            env: Trading environment
+            agent: Trained DQN agent
         """
         self.env = env
         self.agent = agent
         self.visualizer = TradingVisualizer()
         self.trades: List[Dict[str, Any]] = []
 
-    def test(self, episodes: int = 1) -> Tuple[float, List[Dict]]:
-        """Test the agent's performance on the test dataset.
-
+    def test(self, num_episodes: int = 10) -> Dict[str, float]:
+        """Test the trained agent.
+        
         Args:
-            episodes: Number of test episodes to run
-
+            num_episodes: Number of episodes to test
+            
         Returns:
-            Tuple containing final portfolio value and list of trades
+            Dictionary containing test metrics
         """
-        print(f"Starting testing for {episodes} episodes...")
+        try:
+            metrics = {
+                "total_return": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "win_rate": 0.0
+            }
+            
+            for _ in range(num_episodes):
+                state = self.env.reset()
+                done = False
+                episode_return = 0.0
+                
+                while not done:
+                    action = self.agent.act(state)
+                    state, reward, done, _ = self.env.step(action)
+                    episode_return += reward
+                    
+                metrics["total_return"] += episode_return
+                
+            # Calculate average metrics
+            metrics["total_return"] /= num_episodes
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error during testing: {str(e)}")
+            return {}
 
-        best_portfolio_value = 0
-        best_trades = []
-
-        for episode in range(episodes):
-            observation_tuple = self.env.reset()
-            state = observation_tuple[0]  # Extract observation from tuple
-            done = False
-            self.trades = []
-
-            while not done:
-                # Agent selects action (no exploration during testing)
-                action = self.agent.act(state)  # Remove test=True parameter
-
-                # Take action in environment
-                next_state, reward, terminated, truncated, info = self.env.step(action)
-
-                # Record trade if action was taken
-                if action != 0:  # 0 is typically 'hold'
-                    current_price = self.env.df["Close"].iloc[self.env.current_step]
-                    trade = {
-                        "step": len(self.trades),
-                        "action": "buy" if action == 1 else "sell",
-                        "price": current_price,
-                    }
-                    self.trades.append(trade)
-
-                state = next_state
-                done = terminated or truncated
-
-            # Calculate final portfolio value
-            final_price = self.env.df["Close"].iloc[-1]
-            portfolio_value = self.env.balance + self.env.shares_held * final_price
-
-            # Keep track of best performance
-            if portfolio_value > best_portfolio_value:
-                best_portfolio_value = portfolio_value
-                best_trades = self.trades.copy()
-
-            print(f"Episode {episode + 1}/{episodes}")
-            print(f"Final Portfolio Value: ${portfolio_value:.2f}")
-            print(f"Number of trades: {len(self.trades)}")
-            print("-" * 50)
-
-        # Create visualizations for best performance
-        self._create_test_visualizations(best_trades, best_portfolio_value)
-
-        return best_portfolio_value, best_trades
-
-    def _create_test_visualizations(self, trades: List[Dict], final_value: float) -> None:
+    def _create_test_visualizations(self, trades: List[Dict]) -> None:
         """Create and save visualizations of test results.
 
         Args:
             trades: List of trades executed during testing
-            final_value: Final portfolio value
         """
         # Plot trading session
         self.visualizer.plot_trading_session(
-            df=self.env.df, trades=trades, save_path="results/test_trading_session.html"
+            data=self.env.df, trades=trades, save_path="results/test_trading_session.html"
         )
 
         # Plot technical indicators
         self.visualizer.plot_technical_indicators(
-            df=self.env.df, save_path="results/test_technical_analysis.html"
+            data=self.env.df, save_path="results/test_technical_analysis.html"
         )
 
         print("\nTest visualizations have been saved:")

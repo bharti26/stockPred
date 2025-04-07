@@ -1,8 +1,15 @@
-from typing import Optional, cast
+"""Stock data handling and preprocessing utilities.
 
+This module provides functionality for fetching, processing, and managing stock market data.
+It includes methods for downloading historical data, calculating technical indicators,
+and preprocessing data for machine learning models.
+"""
+
+from typing import Optional, cast, Dict, List
 import pandas as pd
-import ta  # type: ignore  # No type stubs available for ta library
 import yfinance as yf
+import ta  # type: ignore  # No type stubs available for ta library
+import numpy as np
 
 
 class StockData:
@@ -24,8 +31,8 @@ class StockData:
 
         Args:
             ticker (str): Stock ticker symbol (e.g., 'AAPL' for Apple)
-            start_date (str): Start date in 'YYYY-MM-DD' format
-            end_date (str): End date in 'YYYY-MM-DD' format
+            start_date (str): Start date in 'YYYY-MM-DD' forma
+            end_date (str): End date in 'YYYY-MM-DD' forma
         """
         self.ticker = ticker
         self.start_date = start_date

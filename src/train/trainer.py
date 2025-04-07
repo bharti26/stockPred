@@ -1,6 +1,6 @@
+import numpy as np
 from typing import Dict, List, Optional
 
-import numpy as np
 
 from src.env.trading_env import StockTradingEnv
 from src.models.dqn_agent import DQNAgent, Experience
@@ -13,7 +13,7 @@ class StockTrader:
 
     Attributes:
         agent (DQNAgent): The DQN agent that learns to trade
-        env (StockTradingEnv): The trading environment
+        env (StockTradingEnv): The trading environmen
         visualizer (TradingVisualizer): Visualization tool for training progress
         history (dict): Dictionary to store training metrics
     """
@@ -23,7 +23,7 @@ class StockTrader:
         Initialize the stock trader.
 
         Args:
-            env: The trading environment
+            env: The trading environmen
             agent: Optional pre-trained agent. If None, a new agent will be created.
         """
         self.env = env
@@ -55,48 +55,37 @@ class StockTrader:
         print(f"Starting training for {episodes} episodes...")
 
         for episode in range(episodes):
-            # Unpack tuple returned by reset
-            reset_result = self.env.reset()
-            state = reset_result[0]  # Extract observation
-            total_reward = 0.0
+            # Initialize episode
+            state = self.env.reset()[0]
+            episode_reward = 0.0
             done = False
 
+            # Run episode
             while not done:
-                # Agent selects action
+                # Execute step
                 action = self.agent.act(state)
-
-                # Take action in environment and handle 5 return values
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
-
-                # Combine termination flags
                 done = terminated or truncated
 
-                # Store experience in replay memory
-                self.agent.remember(
-                    Experience(
-                        state=state, action=action, reward=reward, next_state=next_state, done=done
-                    )
-                )
-
-                # Move to next state
-                state = next_state
-                total_reward += reward
-
-                # Train agent on a batch of experiences
+                # Store and train
+                self.agent.remember(Experience(state, action, reward, next_state, done))
                 if len(self.agent.memory) > batch_size:
                     self.agent.replay(batch_size)
 
-            # Update target model periodically
+                # Update state
+                state = next_state
+                episode_reward += reward
+
+            # Update target model
             if episode % 10 == 0:
                 self.agent.update_target_model()
 
-            # Store episode metrics
-            self.history["episode_rewards"].append(total_reward)
-            final_price = self.env.df["Close"].iloc[-1]
-            portfolio_value = self.env.balance + self.env.shares_held * final_price
+            # Update metrics
+            self.history["episode_rewards"].append(episode_reward)
+            portfolio_value = self.env.state.balance + (self.env.state.shares_held * self.env.df["Close"].iloc[-1])
             self.history["portfolio_values"].append(portfolio_value)
 
-            # Print progress
+            # Log progress
             if episode % render_interval == 0:
                 avg_reward = np.mean(self.history["episode_rewards"][-render_interval:])
                 print(f"Episode: {episode}/{episodes}")
@@ -107,7 +96,8 @@ class StockTrader:
 
                 # Update visualizations
                 self.visualizer.plot_training_history(
-                    self.history, save_path="results/training_progress.html"
+                    self.history,
+                    save_path="results/training_progress.html"
                 )
 
         print("Training completed!")

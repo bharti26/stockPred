@@ -25,13 +25,7 @@ if __name__ == "__main__":
         print(f"Failed to upgrade pip: {e}")
 
     # List of packages to install
-    packages = [
-        "dash",
-        "dash-bootstrap-components",
-        "plotly",
-        "pandas",
-        "numpy"
-    ]
+    packages = ["dash", "dash-bootstrap-components", "plotly", "pandas", "numpy"]
 
     # Install each package
     for package in packages:

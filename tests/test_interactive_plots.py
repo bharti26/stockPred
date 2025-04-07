@@ -1,51 +1,10 @@
-from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.utils.visualization import TradingVisualizer
-
-
-def generate_sample_price_data(n_days=252):
-    """Generate sample price and volume data."""
-    dates = [datetime.now() - timedelta(days=x) for x in range(n_days)]
-    dates.reverse()
-
-    # Generate sample price data with trend and noise
-    price = 100
-    prices = []
-    volumes = []
-    for _ in range(n_days):
-        price *= 1 + np.random.normal(0.0002, 0.02)
-        volume = np.random.randint(50000, 500000)
-        prices.append(price)
-        volumes.append(volume)
-
-    df = pd.DataFrame({"Close": prices, "Volume": volumes}, index=dates)
-
-    # Add technical indicators
-    df["SMA_20"] = df["Close"].rolling(window=20).mean()
-    df["SMA_50"] = df["Close"].rolling(window=50).mean()
-
-    # Calculate Bollinger Bands
-    df["BB_Middle"] = df["Close"].rolling(window=20).mean()
-    df["BB_Upper"] = df["BB_Middle"] + 2 * df["Close"].rolling(window=20).std()
-    df["BB_Lower"] = df["BB_Middle"] - 2 * df["Close"].rolling(window=20).std()
-
-    # Calculate RSI
-    delta = df["Close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df["RSI"] = 100 - (100 / (1 + rs))
-
-    # Calculate MACD
-    exp1 = df["Close"].ewm(span=12, adjust=False).mean()
-    exp2 = df["Close"].ewm(span=26, adjust=False).mean()
-    df["MACD"] = exp1 - exp2
-    df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
-
-    return df
+from tests.utils.test_data import generate_sample_price_data
 
 
 def generate_sample_trades(df, n_trades=20):
@@ -82,13 +41,43 @@ def generate_sample_training_history(n_episodes=100):
     return {"episode_rewards": rewards, "portfolio_values": portfolio_values}
 
 
+@pytest.fixture
+def sample_data() -> pd.DataFrame:
+    """Generate sample data for testing."""
+    df = generate_sample_price_data(days=252)
+    
+    # Add technical indicators
+    df["SMA_20"] = df["Close"].rolling(window=20).mean()
+    df["SMA_50"] = df["Close"].rolling(window=50).mean()
+
+    # Calculate Bollinger Bands
+    df["BB_Middle"] = df["Close"].rolling(window=20).mean()
+    df["BB_Upper"] = df["BB_Middle"] + 2 * df["Close"].rolling(window=20).std()
+    df["BB_Lower"] = df["BB_Middle"] - 2 * df["Close"].rolling(window=20).std()
+
+    # Calculate RSI
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df["RSI"] = 100 - (100 / (1 + rs))
+
+    # Calculate MACD
+    exp1 = df["Close"].ewm(span=12, adjust=False).mean()
+    exp2 = df["Close"].ewm(span=26, adjust=False).mean()
+    df["MACD"] = exp1 - exp2
+    df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+
+    return df
+
+
 def main():
     """Generate sample data and create interactive visualizations."""
     # Create visualizer instance
     visualizer = TradingVisualizer()
 
     # Generate sample data
-    df = generate_sample_price_data()
+    df = generate_sample_price_data(days=252)
     trades = generate_sample_trades(df)
     history = generate_sample_training_history()
 

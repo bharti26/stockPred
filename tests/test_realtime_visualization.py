@@ -145,7 +145,11 @@ def test_realtime_portfolio_update(
 
     # Update visualizer and store state
     visualizer.update_portfolio_state(new_state)
-    current_state = visualizer._current_portfolio_state.copy() if visualizer._current_portfolio_state is not None else None
+    current_state = (
+        visualizer._current_portfolio_state.copy()
+        if visualizer._current_portfolio_state is not None
+        else None
+    )
 
     # Stop updates
     visualizer.stop_realtime_updates()

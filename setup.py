@@ -22,7 +22,7 @@ setup(
         "flake8",
         "mypy",
         "black",
-        "requests"
+        "requests",
     ],
     python_requires=">=3.8",
     author="StockPred Team",

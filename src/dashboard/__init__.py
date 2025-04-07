@@ -1,6 +1,6 @@
 """Dashboard package for StockPred visualization."""
 
-from typing import Any, Dict, Optional
+from typing import Dict, Any, Optional
 
 from src.dashboard.app import app
 from src.dashboard.fallback_app import run_server
@@ -19,8 +19,21 @@ __metadata__: Dict[str, Any] = {
 # Default configuration
 DEFAULT_CONFIG: Dict[str, Any] = {"port": 8050, "debug": False, "host": "0.0.0.0"}
 
-# Dashboard instance holder
-_dashboard_instance: Optional[Any] = None
+
+class DashboardManager:
+    """Singleton class to manage the dashboard instance."""
+    _instance: Optional[Any] = None
+
+    @classmethod
+    def get_instance(cls) -> Any:
+        """Get the dashboard instance.
+
+        Returns:
+            Any: The dashboard instance.
+        """
+        if cls._instance is None:
+            cls._instance = app
+        return cls._instance
 
 
 def get_dashboard() -> Any:
@@ -29,13 +42,7 @@ def get_dashboard() -> Any:
     Returns:
         Any: The dashboard instance.
     """
-    global _dashboard_instance
-    if _dashboard_instance is None:
-        _dashboard_instance = app
-    return _dashboard_instance
-
-
-"""Dashboard module for the StockPred project."""
+    return DashboardManager.get_instance()
 
 
 __all__ = ["app", "run_server"]

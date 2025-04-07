@@ -8,7 +8,7 @@ from src.data.stock_data import StockData
 
 
 @pytest.fixture
-def stock_data():
+def stock_data() -> StockData:
     """Create stock data instance for testing"""
     ticker = "AAPL"
     start_date = "2023-01-01"
@@ -16,7 +16,7 @@ def stock_data():
     return StockData(ticker, start_date, end_date)
 
 
-def test_initialization(stock_data):
+def test_initialization(stock_data: StockData) -> None:
     """Test if StockData is correctly initialized"""
     assert stock_data.ticker == "AAPL"
     assert stock_data.start_date == "2023-01-01"
@@ -25,7 +25,7 @@ def test_initialization(stock_data):
 
 
 @patch("yfinance.Ticker")
-def test_fetch_data(mock_ticker, stock_data):
+def test_fetch_data(mock_ticker: MagicMock, stock_data: StockData) -> None:
     """Test data fetching from Yahoo Finance"""
     # Create mock data
     mock_data = pd.DataFrame(
@@ -52,7 +52,7 @@ def test_fetch_data(mock_ticker, stock_data):
     assert all(col in data.columns for col in ["Open", "High", "Low", "Close", "Volume"])
 
 
-def test_add_technical_indicators(stock_data):
+def test_add_technical_indicators(stock_data: StockData) -> None:
     """Test adding technical indicators"""
     # Create sample data
     stock_data.data = pd.DataFrame(
@@ -73,13 +73,13 @@ def test_add_technical_indicators(stock_data):
     assert all(indicator in data.columns for indicator in expected_indicators)
 
 
-def test_add_technical_indicators_no_data(stock_data):
+def test_add_technical_indicators_no_data(stock_data: StockData) -> None:
     """Test adding technical indicators with no data"""
     with pytest.raises(ValueError):
         stock_data.add_technical_indicators()
 
 
-def test_preprocess_data(stock_data):
+def test_preprocess_data(stock_data: StockData) -> None:
     """Test data preprocessing"""
     # Create sample data with missing values
     stock_data.data = pd.DataFrame(
@@ -126,7 +126,7 @@ def test_preprocess_data(stock_data):
         assert abs(processed_data[feature].std() - 1) < 0.1
 
 
-def test_preprocess_data_no_data(stock_data):
+def test_preprocess_data_no_data(stock_data: StockData) -> None:
     """Test preprocessing with no data"""
     with pytest.raises(ValueError):
         stock_data.preprocess_data()

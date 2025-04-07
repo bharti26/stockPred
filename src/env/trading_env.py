@@ -1,185 +1,165 @@
-from typing import Any, Dict, List, Optional, Tuple
+"""Stock trading environment for reinforcement learning.
 
-import gymnasium as gym
+This module implements a Gymnasium-compatible environment for stock trading.
+It provides a simulation environment where an agent can learn to trade stocks
+by taking actions (buy, sell, hold) and receiving rewards based on portfolio performance.
+"""
+
+from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
+import gymnasium as gym
 from gymnasium import spaces
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+
+@dataclass
+class TradingState:
+    """Represents the current state of a trading environment.
+    
+    Attributes:
+        balance (float): Current account balance
+        shares_held (int): Number of shares currently held
+        trades (list): List of executed trades
+        current_step (int): Current step in the episode
+    """
+    balance: float
+    shares_held: int
+    trades: List[Dict[str, Any]]
+    current_step: int
 
 
 class StockTradingEnv(gym.Env):
-    """A stock trading environment for OpenAI gym/Gymnasium.
-
-    This environment simulates stock trading, where an agent can buy, sell,
-    or hold a single stock. The state space includes the stock price data,
-    technical indicators, and the agent's account information.
-
-    The environment follows the gym interface with custom:
-    - Observation space: Account info + market features
-    - Action space: Discrete(3) for buy (1), sell (2), hold (0)
-    - Reward function: Change in portfolio value
-
-    Attributes:
-        df (pd.DataFrame): Historical price data and indicators
-        initial_balance (float): Starting account balance
-        balance (float): Current account balance
-        shares_held (int): Number of shares currently held
-        current_step (int): Current step in the episode
-        trades (list): List of executed trades
-        action_space (spaces.Discrete): Action space
-        observation_space (spaces.Box): Observation space
-    """
+    """Stock trading environment for reinforcement learning."""
 
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df: pd.DataFrame, initial_balance: float = 10000.0):
-        """Initialize the trading environment.
+    def __init__(self, df: pd.DataFrame, initial_balance: float = 10000.0) -> None:
+        """Initialize the environment.
 
         Args:
-            df (pd.DataFrame): Historical price data with technical indicators
-            initial_balance (float, optional): Starting account balance. Defaults to 10000.0
+            df: DataFrame containing stock data
+            initial_balance: Initial account balance
         """
         super().__init__()
-
         self.df = df
         self.initial_balance = initial_balance
-        self.balance = initial_balance
-        self.shares_held = 0
-        self.trades: List[Dict[str, Any]] = []
-        self.current_step = 0
+        self.state = TradingState(initial_balance, 0, [], 0)
+        self.trades = []
 
         # Define action and observation spaces
-        self.action_space = spaces.Discrete(3)  # buy (1), sell (2), hold (0)
-
-        # Observation space: [balance, shares_held, current_price, position_value,
-        # technical_indicators]
-        n_features = len([col for col in df.columns if 'norm' in col])
+        self.action_space = spaces.Discrete(3)  # 0: hold, 1: buy, 2: sell
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(4 + n_features,),
-            dtype=np.float32
+            shape=(6,),
+            dtype=np.float32,
         )
 
-        self.reset()
+        # Define feature names for the observation space
+        self.feature_names = [
+            'balance',
+            'shares_held',
+            'current_price',
+            'current_step',
+            'num_trades',
+            'initial_balance',
+            'RSI_norm',
+            'MACD_norm',
+            'Signal_norm',
+            'BB_Upper_norm',
+            'BB_Middle_norm',
+            'BB_Lower_norm',
+            'Volume_norm',
+            'Close_norm',
+            'High_norm',
+            'Low_norm',
+            'Open_norm'
+        ]
 
-    def reset(
-        self,
-        *,
-        seed: Optional[int] = None,
-        options: Optional[Dict[str, Any]] = None
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    def reset(self) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Reset the environment to initial state.
 
-        This method is called at the beginning of each episode. It resets the
-        account balance, shares held, and current step to their initial values.
-
-        Args:
-            seed (int, optional): Random seed. Defaults to None.
-            options (dict, optional): Additional options. Defaults to None.
-
         Returns:
-            tuple: Initial observation and empty info dict
+            Tuple containing initial observation and info dictionary
         """
-        super().reset(seed=seed, options=options)
-
-        self.balance = self.initial_balance
-        self.shares_held = 0
-        self.current_step = 0
+        self.state = TradingState(self.initial_balance, 0, [], 0)
         self.trades = []
-
         return self._get_observation(), {}
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Execute one time step within the environment.
 
-        This method processes the agent's action (buy/sell/hold), updates the
-        environment state, and calculates the reward based on the change in
-        portfolio value.
-
         Args:
-            action (int): Action to take (0: hold, 1: buy, 2: sell)
+            action: Action to take (0: hold, 1: buy, 2: sell)
 
         Returns:
-            tuple: (observation, reward, terminated, truncated, info)
-                observation (np.ndarray): Current state observation
-                reward (float): Reward from the action
-                terminated (bool): Whether the episode is done
-                truncated (bool): Whether the episode was truncated
-                info (dict): Additional information
+            Tuple containing:
+            - observation: Current state observation
+            - reward: Reward for the action taken
+            - terminated: Whether the episode is terminated
+            - truncated: Whether the episode was truncated
+            - info: Additional information
         """
-        self.current_step += 1
-        current_price = float(self.df.iloc[self.current_step]['Close'])
-
-        # Calculate reward
-        reward = 0.0
-        done = False
+        current_price = self.df.iloc[self.state.current_step]["Close"]
+        reward = 0
+        terminated = False
+        truncated = False
 
         if action == 1:  # Buy
-            shares_to_buy = int(self.balance // current_price)
+            shares_to_buy = int(self.state.balance / current_price)
             if shares_to_buy > 0:
                 cost = shares_to_buy * current_price
-                self.balance -= cost
-                self.shares_held += shares_to_buy
+                self.state.balance -= cost
+                self.state.shares_held += shares_to_buy
                 self.trades.append({
-                    'step': self.current_step,
-                    'action': 'buy',
-                    'shares': shares_to_buy,
-                    'price': current_price
+                    "step": self.state.current_step,
+                    "action": "buy",
+                    "shares": shares_to_buy,
+                    "price": current_price,
                 })
 
         elif action == 2:  # Sell
-            if self.shares_held > 0:
-                value = self.shares_held * current_price
-                self.balance += value
+            if self.state.shares_held > 0:
+                value = self.state.shares_held * current_price
+                self.state.balance += value
                 self.trades.append({
-                    'step': self.current_step,
-                    'action': 'sell',
-                    'shares': self.shares_held,
-                    'price': current_price
+                    "step": self.state.current_step,
+                    "action": "sell",
+                    "shares": self.state.shares_held,
+                    "price": current_price,
                 })
-                self.shares_held = 0
+                self.state.shares_held = 0
 
-        # Calculate portfolio value and reward
-        portfolio_value = self.balance + (self.shares_held * current_price)
-        if len(self.trades) > 0:
-            reward = portfolio_value - self.initial_balance
+        # Calculate reward
+        portfolio_value = self.state.balance + (self.state.shares_held * current_price)
+        reward = portfolio_value - self.initial_balance
+
+        # Update step
+        self.state.current_step += 1
 
         # Check if episode is done
-        done = self.current_step >= len(self.df) - 1
+        if self.state.current_step >= len(self.df) - 1:
+            terminated = True
 
-        return self._get_observation(), reward, done, False, {}
+        return self._get_observation(), reward, terminated, truncated, {}
 
     def _get_observation(self) -> np.ndarray:
-        """Get the current state observation.
-
-        The observation includes:
-        - Current balance
-        - Number of shares held
-        - Current stock price
-        - Current position value
-        - Normalized technical indicators
+        """Get the current observation.
 
         Returns:
-            np.ndarray: Current state observation
+            Current state observation
         """
-        current_price = float(self.df.iloc[self.current_step]['Close'])
-
-        # Get normalized technical indicators
-        tech_cols = [col for col in self.df.columns if 'norm' in col]
-        tech_indicators = self.df.iloc[self.current_step][tech_cols].values.astype(np.float32)
-
-        # Combine all observations and create a numpy array with explicit type
-        obs = np.array([
-            float(self.balance),
-            float(self.shares_held),
-            float(current_price),
-            float(self.shares_held * current_price),  # Current position value
+        current_price = self.df.iloc[self.state.current_step]["Close"]
+        return np.array([
+            self.state.balance,
+            self.state.shares_held,
+            current_price,
+            self.state.current_step,
+            len(self.trades),
+            self.initial_balance,
         ], dtype=np.float32)
-
-        # Concatenate with technical indicators
-        obs = np.concatenate([obs, tech_indicators])
-
-        return obs
 
     def render(self, mode: str = 'human') -> None:
         """Render the environment to the screen.
@@ -191,10 +171,10 @@ class StockTradingEnv(gym.Env):
             mode (str, optional): Rendering mode. Defaults to 'human'.
         """
         if mode == 'human':
-            print(f'Step: {self.current_step}')
-            print(f'Balance: {self.balance:.2f}')
-            print(f'Shares held: {self.shares_held}')
-            current_price = float(self.df.iloc[self.current_step]["Close"])
+            print(f'Step: {self.state.current_step}')
+            print(f'Balance: {self.state.balance:.2f}')
+            print(f'Shares held: {self.state.shares_held}')
+            current_price = float(self.df.iloc[self.state.current_step]["Close"])
             print(f'Current price: {current_price:.2f}')
-            portfolio_value = self.balance + (self.shares_held * current_price)
+            portfolio_value = self.state.balance + (self.state.shares_held * current_price)
             print(f'Portfolio value: {portfolio_value:.2f}')

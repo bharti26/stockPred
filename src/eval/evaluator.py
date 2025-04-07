@@ -1,8 +1,6 @@
-from typing import Any, Dict, List
-
 import numpy as np
 import pandas as pd
-
+from typing import Dict, List, Any
 from src.env.trading_env import StockTradingEnv
 from src.models.dqn_agent import DQNAgent
 from src.utils.visualization import TradingVisualizer
@@ -12,8 +10,8 @@ class StockEvaluator:
     """A class to evaluate trading strategies through backtesting and performance analysis.
 
     Attributes:
-        agent (DQNAgent): The trained DQN agent
-        env (StockTradingEnv): The trading environment
+        agent (DQNAgent): The trained DQN agen
+        env (StockTradingEnv): The trading environmen
         visualizer (TradingVisualizer): Visualization tool for evaluation results
     """
 
@@ -21,7 +19,7 @@ class StockEvaluator:
         """Initialize the stock evaluator.
 
         Args:
-            env: The trading environment
+            env: The trading environmen
             agent: The trained agent to evaluate
         """
         self.env = env
@@ -48,11 +46,11 @@ class StockEvaluator:
         self.portfolio_values = [initial_balance]
 
         while True:
-            # Get action from agent
+            # Get action from agen
             action = self.agent.act(state)
 
-            # Take action in environment
-            next_state, reward, terminated, truncated, info = self.env.step(action)
+            # Take action in environmen
+            next_state, _, terminated, truncated, _ = self.env.step(action)
 
             # Record trade if action was taken
             if action != 0:  # 0 is typically 'hold'

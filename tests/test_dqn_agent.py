@@ -2,25 +2,37 @@ import numpy as np
 import pytest
 import torch
 
-from src.models.dqn_agent import DQN, DQNAgent, Experience
+from src.models.dqn_agent import DQN, DQNAgent, Experience, DQNAgentConfig
 
 
 @pytest.fixture
-def dqn_model():
+def dqn_model() -> DQN:
     state_size = 10
     action_size = 3
     return DQN(state_size, action_size)
 
 
 @pytest.fixture
-def dqn_agent():
+def dqn_agent() -> DQNAgent:
     state_size = 10
     action_size = 3
-    return DQNAgent(state_size, action_size)
+    config = DQNAgentConfig(
+        state_size=state_size,
+        action_size=action_size,
+        memory_size=10000,
+        batch_size=32,
+        gamma=0.95,
+        epsilon=1.0,
+        epsilon_min=0.01,
+        epsilon_decay=0.995,
+        learning_rate=0.001,
+        device="cpu"
+    )
+    return DQNAgent(config)
 
 
 # DQN Network Tests
-def test_network_architecture(dqn_model):
+def test_network_architecture(dqn_model: DQN) -> None:
     """Test if the DQN architecture is correctly initialized"""
     assert dqn_model.fc1.in_features == 10
     assert dqn_model.fc1.out_features == 64
@@ -30,7 +42,7 @@ def test_network_architecture(dqn_model):
     assert dqn_model.fc3.out_features == 3
 
 
-def test_forward_pass(dqn_model):
+def test_forward_pass(dqn_model: DQN) -> None:
     """Test if forward pass produces expected output shape"""
     batch_size = 32
     x = torch.randn(batch_size, 10)
@@ -39,7 +51,7 @@ def test_forward_pass(dqn_model):
 
 
 # DQN Agent Tests
-def test_agent_initialization(dqn_agent):
+def test_agent_initialization(dqn_agent: DQNAgent) -> None:
     """Test if agent is correctly initialized"""
     assert dqn_agent.state_size == 10
     assert dqn_agent.action_size == 3
@@ -47,7 +59,7 @@ def test_agent_initialization(dqn_agent):
     assert len(dqn_agent.memory) == 0
 
 
-def test_remember(dqn_agent):
+def test_remember(dqn_agent: DQNAgent) -> None:
     """Test if experiences are correctly stored in memory"""
     state = np.random.random(10)
     action = 1
@@ -62,7 +74,7 @@ def test_remember(dqn_agent):
     assert len(dqn_agent.memory) == initial_memory_size + 1
 
 
-def test_act_explore(dqn_agent):
+def test_act_explore(dqn_agent: DQNAgent) -> None:
     """Test exploration in act method"""
     dqn_agent.epsilon = 1.0  # Force exploration
     state = np.random.random(10)
@@ -70,7 +82,7 @@ def test_act_explore(dqn_agent):
     assert 0 <= action < dqn_agent.action_size
 
 
-def test_act_exploit(dqn_agent):
+def test_act_exploit(dqn_agent: DQNAgent) -> None:
     """Test exploitation in act method"""
     dqn_agent.epsilon = 0.0  # Force exploitation
     state = np.random.random(10)
@@ -78,7 +90,7 @@ def test_act_exploit(dqn_agent):
     assert 0 <= action < dqn_agent.action_size
 
 
-def test_epsilon_decay(dqn_agent):
+def test_epsilon_decay(dqn_agent: DQNAgent) -> None:
     """Test if epsilon decays correctly during replay"""
     initial_epsilon = dqn_agent.epsilon
 
@@ -97,7 +109,7 @@ def test_epsilon_decay(dqn_agent):
     assert dqn_agent.epsilon < initial_epsilon
 
 
-def test_target_model_update(dqn_agent):
+def test_target_model_update(dqn_agent: DQNAgent) -> None:
     """Test if target model is correctly updated"""
     # Get initial parameters
     initial_params = [param.clone().detach() for param in dqn_agent.target_model.parameters()]

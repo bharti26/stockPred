@@ -13,9 +13,7 @@ from src.models.dqn_agent import DQNAgent
 from src.env.trading_env import StockTradingEnv
 
 
-def benchmark_model(
-    model_name: str, ticker: str, days: int = 30
-) -> Dict[str, Any]:
+def benchmark_model(model_name: str, ticker: str, days: int = 30) -> Dict[str, Any]:
     """Benchmark a specific model on historical data.
 
     Args:
@@ -30,8 +28,7 @@ def benchmark_model(
     start_date = pd.Timestamp.now() - pd.Timedelta(days=days)
     end_date = pd.Timestamp.now()
 
-    stock_data = StockData(ticker, start_date.strftime('%Y-%m-%d'),
-                           end_date.strftime('%Y-%m-%d'))
+    stock_data = StockData(ticker, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
     df = stock_data.fetch_data()
     df = stock_data.add_technical_indicators()
     df = stock_data.preprocess_data()
@@ -64,7 +61,7 @@ def benchmark_model(
     # Calculate metrics
     execution_time = end_time - start_time
     initial_portfolio = 10000  # Default initial balance
-    final_portfolio = env.balance + (env.shares_held * df.iloc[-1]['Close'])
+    final_portfolio = env.balance + (env.shares_held * df.iloc[-1]["Close"])
     roi = (final_portfolio - initial_portfolio) / initial_portfolio * 100
 
     return {
@@ -76,13 +73,11 @@ def benchmark_model(
         "execution_time_seconds": execution_time,
         "trades_executed": len(env.trades),
         "final_portfolio_value": final_portfolio,
-        "roi_percent": roi
+        "roi_percent": roi,
     }
 
 
-def run_benchmarks(
-    models: List[str], tickers: List[str], days: int = 30
-) -> pd.DataFrame:
+def run_benchmarks(models: List[str], tickers: List[str], days: int = 30) -> pd.DataFrame:
     """Run benchmarks across multiple models and tickers.
 
     Args:
@@ -109,30 +104,14 @@ def run_benchmarks(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark trading models")
     parser.add_argument(
-        "--models",
-        type=str,
-        nargs="+",
-        default=["dqn_default"],
-        help="Model names"
+        "--models", type=str, nargs="+", default=["dqn_default"], help="Model names"
     )
     parser.add_argument(
-        "--tickers",
-        type=str,
-        nargs="+",
-        default=["AAPL", "MSFT", "GOOG"],
-        help="Ticker symbols"
+        "--tickers", type=str, nargs="+", default=["AAPL", "MSFT", "GOOG"], help="Ticker symbols"
     )
+    parser.add_argument("--days", type=int, default=30, help="Number of days to include")
     parser.add_argument(
-        "--days",
-        type=int,
-        default=30,
-        help="Number of days to include"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="results/benchmark_results.csv",
-        help="Output CSV file"
+        "--output", type=str, default="results/benchmark_results.csv", help="Output CSV file"
     )
 
     args = parser.parse_args()

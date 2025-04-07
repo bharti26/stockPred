@@ -30,4 +30,13 @@ module = [
     "gymnasium.*",
     "yfinance.*"
 ]
-ignore_missing_imports = true 
+ignore_missing_imports = true
+
+[tool.pylint.messages_control]
+disable = [
+    "R0903",  # Too few public methods
+    "R0902",  # Too many instance attributes
+    "C0411",  # Wrong import order
+    "C0301",  # Line too long
+    "C0114",  # Missing module docstring
+] 

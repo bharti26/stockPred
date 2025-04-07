@@ -2,21 +2,22 @@
 """Fallback version of the dashboard that doesn't require Dash."""
 
 # Standard library imports
-import argparse
-import json
-import logging
-import os
-import sys
-import threading
-import time
-import webbrowser
+from typing import Dict, List, Any
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, List
+import sys
+import logging
+import webbrowser
 
 # Third-party imports
 import pandas as pd
 import yfinance as yf
+import os
+import json
+import time
+
+# Local imports
+from src.utils.cli import create_dashboard_parser
 
 # Ensure proper imports from parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -271,6 +272,7 @@ class StockDataProvider:
                 }
             )
 
+        result = pd.DataFrame(result)
         return result
 
 
@@ -286,7 +288,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", content_type)
         self.end_headers()
 
-    def do_GET(self) -> None:
+    def do_get(self) -> None:
         """Handle GET requests."""
         if self.path == "/":
             self._set_headers()
@@ -294,7 +296,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/data"):
             self._set_headers("application/json")
             # Parse ticker from query string
-            ticker = "AAPL"  # Default
+            ticker = "AAPL"  # Defaul
             if "?" in self.path:
                 query = self.path.split("?")[1]
                 params = query.split("&")
@@ -346,31 +348,12 @@ def open_browser(host: str, port: int) -> None:
 
 def main() -> None:
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Simple Stock Dashboard")
-    parser.add_argument(
-        "--port", type=int, default=8050, help="Port to run the dashboard on (default: 8050)"
+    parser = create_dashboard_parser(
+        description="Simple Stock Dashboard",
+        default_host="localhost"
     )
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="localhost",
-        help="Host to run the dashboard on (default: localhost)",
-    )
-    parser.add_argument(
-        "--no-browser", action="store_true", help="Don't automatically open the browser"
-    )
-
     args = parser.parse_args()
-
-    if not args.no_browser:
-        threading.Thread(target=open_browser, args=(args.host, args.port), daemon=True).start()
-
-    try:
-        run_server(args.host, args.port)
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error("Error running server: %s", e)
+    run_server(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
