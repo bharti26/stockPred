@@ -345,8 +345,15 @@ class DQNAgent:
             path: Path to load weights from
         """
         checkpoint = torch.load(path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self._target_model.load_state_dict(checkpoint['target_model_state_dict'])
+        
+        # Handle both old and new model state dictionary formats
+        if 'model_state_dict' in checkpoint:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self._target_model.load_state_dict(checkpoint['target_model_state_dict'])
+        else:
+            self.model.load_state_dict(checkpoint['policy_net_state_dict'])
+            self._target_model.load_state_dict(checkpoint['target_net_state_dict'])
+            
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.epsilon = checkpoint['epsilon']
 

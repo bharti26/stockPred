@@ -26,16 +26,45 @@ data_handler.fetch_data()
 data_handler.add_technical_indicators()
 data_handler.preprocess_data()
 
+# Print all available columns
+print("All available columns:")
+print(data_handler.data.columns.tolist())
+
+# Print normalized columns
+print("\nNormalized columns:")
+normalized_cols = [col for col in data_handler.data.columns if col.endswith('_norm')]
+print(normalized_cols)
+
+# Ensure we have all required features
+required_features = [
+    'Open', 'High', 'Low', 'Close', 'Volume',
+    'SMA_20', 'SMA_50', 'RSI', 'MACD', 'MACD_Signal',
+    'BB_Upper', 'BB_Lower'
+]
+
+# Add any missing features
+for feature in required_features:
+    if f"{feature}_norm" not in data_handler.data.columns:
+        print(f"\nAdding missing feature: {feature}_norm")
+        data_handler.data[f"{feature}_norm"] = (data_handler.data[feature] - data_handler.data[feature].mean()) / data_handler.data[feature].std()
+
+# Verify we have all normalized features
+normalized_features = [col for col in data_handler.data.columns if col.endswith('_norm')]
+print("\nFinal normalized features:")
+print(normalized_features)
+print(f"\nNumber of normalized features: {len(normalized_features)}")
+
 # Display the data
+print("\nFirst few rows of data:")
 data_handler.data.head()
 
 # %%
 # Initialize environment
 env = StockTradingEnv(data_handler.data)
 
-# Create agent config
+# Create agent config with correct state size
 config = DQNAgentConfig(
-    state_size=env.observation_space.shape[0],
+    state_size=16,  # Fixed state size to match trained model
     action_size=env.action_space.n
 )
 
@@ -43,10 +72,10 @@ config = DQNAgentConfig(
 agent = DQNAgent(config)
 
 # Load trained weights
-model_path = "models/trained_model.pth"
+model_path = os.path.join(os.getcwd(), "models/dqn_AAPL.pth")
 agent.load(model_path)
 
-print(f"Model loaded from {model_path}")
+print(f"\nModel loaded from {model_path}")
 
 # %%
 def evaluate_model(env, agent, initial_balance=10000.0):

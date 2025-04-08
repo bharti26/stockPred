@@ -49,11 +49,11 @@ clean:
 
 train:
 	@echo "Training models..."
-	$(PYTHON) src/main.py
+	$(PYTHON) src/train_models.py
 
 dashboard:
 	@echo "Starting dashboard..."
-	$(PYTHON) src/dashboard/run.py
+	$(PYTHON) src/dashboard/app.py
 
 benchmark:
 	@echo "Running performance benchmarks..."

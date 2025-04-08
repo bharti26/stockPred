@@ -11,21 +11,20 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import flask
-from dash import Dash, html, dcc, Input, Output, State
-from dash.exceptions import PreventUpdate
+from dash import Dash, html, dcc, Input, Output, State, callback_context
+from dash.dependencies import ALL
 from gymnasium.spaces import Discrete
 from plotly.subplots import make_subplots
 from typing_extensions import Protocol
 import logging
+import json
 
 from src.data.realtime_data import RealTimeStockData
 from src.models.dqn_agent import DQNAgent, DQNAgentConfig
 from src.env.trading_env import StockTradingEnv
-from src.utils.visualization import TradingVisualizer
 from src.data.top_stocks import get_top_stocks
 from src.data.stock_data import StockData
 from src.utils.cli import create_dashboard_parser
-from src.utils.chart_utils import create_candlestick_chart
 
 # Type definitions
 T = TypeVar("T")
@@ -192,7 +191,7 @@ TICKER_MODEL_MAPPING = {
     "WMT": "dqn_WMT",  # Walmar
 }
 
-# Define layou
+# Define layout
 app.layout = html.Div(
     [
         # Header with logo and title
@@ -201,80 +200,106 @@ app.layout = html.Div(
                 html.H1("StockPred Dashboard", style={"textAlign": "center"}),
                 html.P("Real-time stock prediction visualization", style={"textAlign": "center"}),
             ],
-            className="header",
+            className="header"
         ),
-        # Control panel
+        # Main content
         html.Div(
             [
-                # Ticker selection
+                # Ticker table
                 html.Div(
                     [
-                        html.Label("Select Ticker:"),
-                        dcc.Dropdown(
-                            id="ticker-input",
-                            options=[
-                                {"label": ticker, "value": ticker}
-                                for ticker in TICKER_MODEL_MAPPING
+                        html.H3("Available Stocks", style={"textAlign": "center", "marginBottom": "20px"}),
+                        html.Table(
+                            [
+                                html.Thead(
+                                    html.Tr(
+                                        [
+                                            html.Th("Symbol"),
+                                            html.Th("Current Price"),
+                                            html.Th("Change"),
+                                            html.Th("Volume"),
+                                            html.Th("Action")
+                                        ]
+                                    )
+                                ),
+                                html.Tbody(id="ticker-table-body")
                             ],
-                            value="AAPL",
-                        ),
-                        html.Button("Load Ticker", id="ticker-button", n_clicks=0),
+                            style={
+                                "width": "100%",
+                                "borderCollapse": "collapse",
+                                "marginBottom": "20px"
+                            }
+                        )
                     ],
-                    className="control-item",
+                    style={
+                        "padding": "20px",
+                        "backgroundColor": "#f8f9fa",
+                        "borderRadius": "5px",
+                        "marginBottom": "20px",
+                        "boxShadow": "0 2px 4px rgba(0,0,0,0.1)"
+                    }
                 ),
-                # Model selection (hidden by default, shown only for custom model selection)
+                # Main chart
                 html.Div(
                     [
-                        html.Label("Select Model:"),
-                        dcc.Dropdown(
-                            id="model-dropdown",
-                            options=[
-                                {"label": f"{ticker} Model", "value": model_name}
-                                for ticker, model_name in TICKER_MODEL_MAPPING.items()
-                            ],
-                            value=None,  # No default value, will be set based on ticker
-                            style={"display": "none"},  # Hide by defaul
+                        dcc.Graph(id="main-chart")
+                    ],
+                    className="chart-container"
+                ),
+                # Performance metrics
+                html.Div(
+                    [
+                        html.H3("Performance Metrics"),
+                        html.Div(
+                            id="performance-metrics",
+                            className="metrics-container"
+                        ),
+                        html.H3("Trade History"),
+                        html.Div(
+                            id="trade-history",
+                            className="trade-history"
                         ),
                     ],
-                    className="control-item",
-                    id="model-selection-container",
+                    className="metrics-panel"
                 ),
             ],
-            className="control-panel",
-        ),
-        # Top Stocks Section
-        html.Div(
-            [
-                html.H3("Top 10 Stocks"),
-                html.Div(id="top-stocks-table"),
-            ],
-            style={"width": "100%", "margin": "20px 0"},
-        ),
-        # Main char
-        html.Div([dcc.Graph(id="main-chart")], className="chart-container"),
-        # Performance metrics
-        html.Div(
-            [
-                html.H3("Performance Metrics"),
-                html.Div(id="performance-metrics"),
-                html.H3("Trade History"),
-                html.Div(id="trade-history"),
-            ],
-            style={"width": "30%", "display": "inline-block", "vertical-align": "top"},
+            id="main-content",
+            style={"display": "block"}
         ),
         # Footer with status information
         html.Div(
             [
                 html.P("Dashboard Status: "),
                 html.Span(
-                    "Active", id="dashboard-status", style={"color": "green", "fontWeight": "bold"}
+                    "Active",
+                    id="dashboard-status",
+                    style={
+                        "color": "green",
+                        "fontWeight": "bold",
+                        "padding": "5px 10px",
+                        "borderRadius": "5px",
+                        "backgroundColor": "#f8f9fa",
+                        "marginLeft": "10px"
+                    }
                 ),
             ],
-            style={"textAlign": "center", "marginTop": "20px"},
+            className="footer",
+            style={
+                "position": "fixed",
+                "bottom": "0",
+                "width": "100%",
+                "backgroundColor": "#f8f9fa",
+                "padding": "10px",
+                "borderTop": "1px solid #ddd",
+                "textAlign": "center",
+                "zIndex": "1000"
+            }
         ),
         # Update interval
         dcc.Interval(
-            id="interval-component", interval=60 * 1000, n_intervals=0  # in milliseconds (1 minute)
+            id="interval-component",
+            interval=5 * 1000,  # Update every 5 seconds
+            n_intervals=0
         ),
     ],
     className="dash-container",
@@ -308,6 +333,22 @@ class DataStore:
         Returns:
             List of trade dictionaries
         """
+        if not self.trades:
+            # Add some sample trades for testing
+            self.trades = [
+                {
+                    "time": "2024-04-07 10:00:00",
+                    "action": "buy",
+                    "shares": 100,
+                    "price": 150.25
+                },
+                {
+                    "time": "2024-04-07 11:30:00",
+                    "action": "sell",
+                    "shares": 50,
+                    "price": 152.75
+                }
+            ]
         return self.trades
 
     def clear_data(self) -> None:
@@ -319,24 +360,24 @@ class DataStore:
         self.trades = []
 
     def _initialize_data_source(self, ticker: str) -> Optional[pd.DataFrame]:
-        """Initialize data source and fetch initial data."""
+        """Initialize data source for a given ticker.
+        
+        Args:
+            ticker: Stock ticker symbol
+            
+        Returns:
+            Initial data if successful, None otherwise
+        """
         try:
+            logger.info(f"Initializing data source for {ticker}")
             self.data_source = RealTimeStockData(ticker)
-            initial_data = self.data_source.get_latest_data()
-            
-            if initial_data is None or initial_data.empty:
-                print(f"Warning: Failed to fetch initial data for {ticker}")
+            self.ticker = ticker
+            if self.data_source.data.empty:
+                logger.error(f"No data available for {ticker}")
                 return None
-                
-            try:
-                self.data_source.start_streaming()
-                print(f"Started streaming {ticker} data at {self.data_source.interval} intervals")
-            except Exception as e:
-                print(f"Warning: Could not start streaming: {str(e)}")
-            
-            return initial_data
+            return self.data_source.data
         except Exception as e:
-            print(f"Warning: Could not initialize data source: {str(e)}")
+            logger.error(f"Error initializing data source: {str(e)}")
             return None
 
     def _initialize_agent(self, initial_data: Optional[pd.DataFrame], model_name: Optional[str]) -> None:
@@ -417,14 +458,18 @@ class DataStore:
             self.model_name = model_name
             initial_data = self._initialize_data_source(ticker)
             
+            # Start data streaming
+            if self.data_source is not None:
+                self.data_source.start_streaming()
+            
             # Initialize trading agent
             self._initialize_agent(initial_data, model_name)
             
             self.trades = []
             
         except Exception as e:
-            print(f"Error initializing data store: {e}")
-            print(traceback.format_exc())
+            logger.error(f"Error initializing data store: {e}")
+            logger.error(traceback.format_exc())
             # Reset state on error
             self.ticker = None
             self.model_name = None
@@ -438,19 +483,177 @@ class DataStore:
 data_store = DataStore()
 
 
-# Create the callback with proper typing
-callback = app.callback(
-    [
-        Output("main-chart", "figure"),
-        Output("performance-metrics", "children"),
-        Output("trade-history", "children"),
-        Output("dashboard-status", "children"),
-        Output("dashboard-status", "style"),
-        Output("top-stocks-table", "children"),
-    ],
-    [Input("ticker-button", "n_clicks"), Input("interval-component", "n_intervals")],
-    [State("ticker-input", "value"), State("model-dropdown", "value")],
+# Register the callback for the ticker table
+@app.callback(
+    Output("ticker-table-body", "children"),
+    [Input("interval-component", "n_intervals")],
+    prevent_initial_call=False
 )
+def update_ticker_table(n_intervals):
+    """Update the ticker table with current values."""
+    try:
+        rows = []
+        for ticker in TICKER_MODEL_MAPPING.keys():
+            try:
+                # Initialize data source for this ticker
+                data_source = RealTimeStockData(ticker)
+                current_values = data_source.get_current_values()
+                
+                if current_values:
+                    price = current_values.get("current_price", "N/A")
+                    change = current_values.get("change", "N/A")
+                    volume = current_values.get("volume", "N/A")
+                    
+                    # Determine change color
+                    change_color = "green" if change >= 0 else "red"
+                    
+                    rows.append(
+                        html.Tr(
+                            [
+                                html.Td(ticker),
+                                html.Td(f"${price:.2f}"),
+                                html.Td(
+                                    f"{change:.2f}%",
+                                    style={"color": change_color}
+                                ),
+                                html.Td(f"{volume:,}"),
+                                html.Td(
+                                    html.Button(
+                                        "View",
+                                        id={"type": "view-button", "index": ticker},
+                                        n_clicks=0,
+                                        style={
+                                            "padding": "5px 10px",
+                                            "backgroundColor": "#007bff",
+                                            "color": "white",
+                                            "border": "none",
+                                            "borderRadius": "3px",
+                                            "cursor": "pointer"
+                                        }
+                                    )
+                                )
+                            ],
+                            style={
+                                "borderBottom": "1px solid #ddd",
+                                "padding": "8px",
+                                "textAlign": "center"
+                            }
+                        )
+                    )
+            except Exception as e:
+                logger.error(f"Error updating ticker {ticker}: {str(e)}")
+                rows.append(
+                    html.Tr(
+                        [
+                            html.Td(ticker),
+                            html.Td("N/A"),
+                            html.Td("N/A"),
+                            html.Td("N/A"),
+                            html.Td(
+                                html.Button(
+                                    "View",
+                                    id={"type": "view-button", "index": ticker},
+                                    n_clicks=0,
+                                    style={
+                                        "padding": "5px 10px",
+                                        "backgroundColor": "#007bff",
+                                        "color": "white",
+                                        "border": "none",
+                                        "borderRadius": "3px",
+                                        "cursor": "pointer"
+                                    }
+                                )
+                            )
+                        ],
+                        style={
+                            "borderBottom": "1px solid #ddd",
+                            "padding": "8px",
+                            "textAlign": "center"
+                        }
+                    )
+                )
+        
+        return rows
+        
+    except Exception as e:
+        logger.error(f"Error updating ticker table: {str(e)}")
+        return []
+
+
+# Register the callback for the view button
+@app.callback(
+    Output("main-chart", "figure"),
+    [Input({"type": "view-button", "index": ALL}, "n_clicks")],
+    prevent_initial_call=False
+)
+def update_chart(n_clicks):
+    """Update the main chart when a view button is clicked."""
+    ctx = callback_context
+    if not ctx.triggered:
+        return go.Figure()
+    
+    # Get the button that was clicked
+    button_id = ctx.triggered[0]["prop_id"]
+    if not button_id:
+        return go.Figure()
+    
+    try:
+        # Extract ticker from button ID
+        button_id = button_id.split(".")[0]
+        if not button_id:
+            return go.Figure()
+            
+        # Parse the button ID to get the ticker
+        button_data = json.loads(button_id)
+        if "index" not in button_data:
+            return go.Figure()
+            
+        ticker = button_data["index"]
+        logger.info(f"View button clicked for ticker: {ticker}")
+        
+        # Initialize data source for this ticker
+        data_source = RealTimeStockData(ticker)
+        data = data_source.get_latest_data()
+        
+        if data is None or data.empty:
+            logger.warning(f"No data available for {ticker}")
+            return go.Figure()
+        
+        # Create candlestick chart
+        fig = go.Figure(data=[go.Candlestick(
+            x=data.index,
+            open=data['Open'],
+            high=data['High'],
+            low=data['Low'],
+            close=data['Close']
+        )])
+        
+        # Add volume as a bar chart below
+        fig.add_trace(go.Bar(
+            x=data.index,
+            y=data['Volume'],
+            name='Volume',
+            yaxis='y2'
+        ))
+        
+        fig.update_layout(
+            title=f"{ticker} Stock Price",
+            yaxis_title="Price",
+            xaxis_title="Date",
+            template="plotly_dark",
+            yaxis2=dict(
+                title="Volume",
+                overlaying="y",
+                side="right"
+            )
+        )
+        
+        logger.info(f"Chart updated for {ticker}")
+        return fig
+        
+    except Exception as e:
+        logger.error(f"Error updating chart: {str(e)}")
+        return go.Figure()
 
 
 def create_top_stocks_table() -> html.Div:
@@ -496,30 +699,114 @@ def create_top_stocks_table() -> html.Div:
 def create_metrics(portfolio_state: Dict[str, Any]) -> List[html.Div]:
     """Create metrics display components."""
     if not portfolio_state:
-        return []
+        return [html.Div("No metrics available", style={"color": "gray", "fontStyle": "italic"})]
+
+    metrics_style = {
+        "padding": "10px",
+        "margin": "5px",
+        "border": "1px solid #ddd",
+        "borderRadius": "5px",
+        "backgroundColor": "#f9f9f9"
+    }
+
+    value_style = {
+        "fontWeight": "bold",
+        "color": "#2c3e50"
+    }
 
     metrics = [
-        html.Div(f"Portfolio Value: ${portfolio_state.get('portfolio_value', 0):.2f}"),
-        html.Div(f"Cash Balance: ${portfolio_state.get('cash_balance', 0):.2f}"),
-        html.Div(f"Shares Held: {portfolio_state.get('shares_held', 0)}"),
-        html.Div(f"Total Trades: {portfolio_state.get('total_trades', 0)}"),
+        html.Div([
+            html.Span("Portfolio Value: ", style={"marginRight": "5px"}),
+            html.Span(f"${portfolio_state.get('portfolio_value', 0):.2f}", style=value_style)
+        ], style=metrics_style),
+        
+        html.Div([
+            html.Span("Cash Balance: ", style={"marginRight": "5px"}),
+            html.Span(f"${portfolio_state.get('cash_balance', 0):.2f}", style=value_style)
+        ], style=metrics_style),
+        
+        html.Div([
+            html.Span("Shares Held: ", style={"marginRight": "5px"}),
+            html.Span(str(portfolio_state.get('shares_held', 0)), style=value_style)
+        ], style=metrics_style),
+        
+        html.Div([
+            html.Span("Total Trades: ", style={"marginRight": "5px"}),
+            html.Span(str(portfolio_state.get('total_trades', 0)), style=value_style)
+        ], style=metrics_style)
     ]
+
+    # Add returns metrics if available
+    if 'returns' in portfolio_state:
+        returns = portfolio_state['returns']
+        returns_color = "green" if returns >= 0 else "red"
+        metrics.append(
+            html.Div([
+                html.Span("Returns: ", style={"marginRight": "5px"}),
+                html.Span(f"{returns:.2f}%", style={**value_style, "color": returns_color})
+            ], style=metrics_style)
+        )
+
+    # Add Sharpe ratio if available
+    if 'sharpe_ratio' in portfolio_state:
+        metrics.append(
+            html.Div([
+                html.Span("Sharpe Ratio: ", style={"marginRight": "5px"}),
+                html.Span(f"{portfolio_state['sharpe_ratio']:.2f}", style=value_style)
+            ], style=metrics_style)
+        )
+
+    # Add max drawdown if available
+    if 'max_drawdown' in portfolio_state:
+        metrics.append(
+            html.Div([
+                html.Span("Max Drawdown: ", style={"marginRight": "5px"}),
+                html.Span(f"{portfolio_state['max_drawdown']:.2f}%", style=value_style)
+            ], style=metrics_style)
+        )
+
     return metrics
 
 
 def create_trade_history(portfolio_state: Dict[str, Any]) -> List[html.Div]:
-    """Create trade history display components."""
-    if not portfolio_state:
-        return []
+    """Create trade history display components.
+    
+    Args:
+        portfolio_state: Dictionary containing portfolio state and trade history
+        
+    Returns:
+        List of HTML divs containing trade history
+    """
+    try:
+        trades = data_store.get_trade_history()
+        if not trades:
+            return [html.Div("No trades yet", style={"color": "gray", "fontStyle": "italic"})]
 
-    history = []
-    for trade in portfolio_state["trades"][-5:]:  # Show last 5 trades
-        history.append(
-            html.Div(
-                f"{trade['time']}: {trade['action']} {trade['shares']} shares at ${trade['price']:.2f}"
+        trade_style = {
+            "padding": "8px",
+            "margin": "4px",
+            "border": "1px solid #eee",
+            "borderRadius": "4px",
+            "backgroundColor": "#f8f9fa"
+        }
+
+        history = []
+        for trade in trades[-5:]:  # Show last 5 trades
+            trade_type = "Buy" if trade['action'] == 'buy' else "Sell"
+            trade_color = "green" if trade['action'] == 'buy' else "red"
+            
+            history.append(
+                html.Div([
+                    html.Span(f"{trade['time']}: ", style={"color": "gray"}),
+                    html.Span(trade_type, style={"color": trade_color, "fontWeight": "bold"}),
+                    html.Span(f" {trade['shares']} shares at ${trade['price']:.2f}")
+                ], style=trade_style)
             )
-        )
-    return history
+
+        return history
+    except Exception as e:
+        logger.error(f"Error creating trade history: {str(e)}")
+        return [html.Div("Error loading trade history", style={"color": "red"})]
 
 
 def create_trading_components(latest_data: pd.DataFrame) -> Tuple[StockTradingEnv, DQNAgent]:
@@ -549,13 +836,33 @@ def create_portfolio_state(data: RealTimeStockData) -> Dict[str, Any]:
         Dictionary containing portfolio state
     """
     latest_indicators = data.get_latest_indicators()
-    return {
+    latest_data = data.get_latest_data()
+    
+    portfolio_state = {
         'portfolio_value': latest_indicators.get('portfolio_value', 0.0),
         'cash_balance': latest_indicators.get('cash_balance', 10000.0),
         'shares_held': latest_indicators.get('shares_held', 0),
         'total_trades': latest_indicators.get('total_trades', 0),
         'latest_price': data.get_latest_price() or 0.0,
     }
+
+    # Calculate additional metrics if we have enough data
+    if latest_data is not None and not latest_data.empty:
+        # Calculate returns
+        if len(latest_data) > 1:
+            returns = ((latest_data['Close'].iloc[-1] - latest_data['Close'].iloc[0]) / 
+                      latest_data['Close'].iloc[0] * 100)
+            portfolio_state['returns'] = returns
+
+            # Calculate daily returns for Sharpe ratio
+            daily_returns = latest_data['Close'].pct_change().dropna()
+            if len(daily_returns) > 0:
+                portfolio_state['sharpe_ratio'] = calculate_sharpe_ratio(daily_returns)
+
+            # Calculate max drawdown
+            portfolio_state['max_drawdown'] = calculate_max_drawdown(latest_data['Close']) * 100
+
+    return portfolio_state
 
 
 def create_error_state() -> Tuple[Any, List[html.Div], List[html.Div], str, Dict[str, str], html.Div]:
@@ -572,193 +879,6 @@ def create_error_state() -> Tuple[Any, List[html.Div], List[html.Div], str, Dict
         {"display": "none"},
         html.Div(id="trading-status", children="Error: Failed to update metrics"),
     )
-
-
-def update_trading_metrics(
-    ticker: Optional[str],
-    model_name: str,
-) -> Tuple[Any, List[html.Div], List[html.Div], str, Dict[str, str], html.Div]:
-    """Update trading metrics and visualizations."""
-    if not ticker or not model_name:
-        raise PreventUpdate
-
-    try:
-        # Initialize data
-        data = RealTimeStockData(ticker)
-        data.start_streaming()
-        latest_data = data.get_latest_data()
-
-        # Create portfolio state
-        portfolio_state = create_portfolio_state(data)
-
-        # Create visualizer and update data
-        visualizer = TradingVisualizer()
-        visualizer.update_realtime_data(latest_data)
-        visualizer.update_portfolio_state(portfolio_state)
-
-        # Generate metrics and visualizations
-        metrics = create_metrics(portfolio_state)
-        trade_history = create_trade_history(portfolio_state)
-        
-        # Get technical indicators chart with default empty figure
-        chart = visualizer.plot_technical_indicators(latest_data)
-        if not chart:  # Handle None or empty figure
-            chart = go.Figure()
-
-        return (
-            chart,
-            metrics,
-            trade_history,
-            f"Trading {ticker} with {model_name}",
-            {"display": "block"},
-            html.Div(id="trading-status", children="Active"),
-        )
-
-    except Exception as e:
-        print(f"Error updating trading metrics: {e}")
-        return create_error_state()
-
-
-# Register the callback
-update_trading_metrics = app.callback(
-    Output("chart", "figure"),
-    Output("metrics", "children"),
-    Output("trade-history", "children"),
-    Output("status", "children"),
-    Output("status", "style"),
-    Output("trading-status", "children"),
-    Input("start-button", "n_clicks"),
-    Input("interval-component", "n_intervals"),
-    State("ticker-input", "value"),
-    State("model-dropdown", "value"),
-)(update_trading_metrics)
-
-
-def create_candlestick_trace(
-    data: pd.DataFrame,
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-) -> go.Candlestick:
-    """Create a candlestick trace from data.
-    
-    Args:
-        data: DataFrame with OHLCV data
-        row: Optional row number for subplot
-        col: Optional column number for subplot
-        
-    Returns:
-        Candlestick trace
-    """
-    trace = go.Candlestick(
-        x=data.index,
-        open=data["Open"],
-        high=data["High"],
-        low=data["Low"],
-        close=data["Close"],
-        name="Price",
-    )
-    
-    if row is not None and col is not None:
-        trace.update(row=row, col=col)
-    
-    return trace
-
-
-def create_volume_trace(
-    data: pd.DataFrame,
-    row: Optional[int] = None,
-    col: Optional[int] = None,
-) -> go.Bar:
-    """Create a volume bar trace from data.
-    
-    Args:
-        data: DataFrame with OHLCV data
-        row: Optional row number for subplot
-        col: Optional column number for subplot
-        
-    Returns:
-        Volume bar trace
-    """
-    trace = go.Bar(
-        x=data.index,
-        y=data["Volume"],
-        name="Volume",
-        marker_color="blue",
-    )
-    
-    if row is not None and col is not None:
-        trace.update(row=row, col=col)
-    
-    return trace
-
-
-def create_trade_marker(trade: Dict[str, Any]) -> go.Scatter:
-    """Create a scatter trace for a trade marker.
-    
-    Args:
-        trade: Trade data dictionary
-        
-    Returns:
-        Scatter trace for the trade marker
-    """
-    return go.Scatter(
-        x=[trade["time"]],
-        y=[trade["price"]],
-        mode="markers",
-        marker={
-            "symbol": "triangle-up" if trade["action"] == "buy" else "triangle-down",
-            "size": 10,
-            "color": "green" if trade["action"] == "buy" else "red",
-        },
-        name=f"{trade['action'].capitalize()} at {trade['price']:.2f}",
-    )
-
-
-def create_chart(df: pd.DataFrame, trades: List[Dict]) -> go.Figure:
-    """Create the main chart with price data and indicators."""
-    # Create figure with subplots
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.1,
-        row_heights=[0.7, 0.3],
-        subplot_titles=("Price & Indicators", "Volume"),
-    )
-
-    # Create candlestick chart
-    trace = create_candlestick_chart(
-        data=df,
-        name="Price",
-        showlegend=True,
-        increasing_line_color="#26a69a",
-        decreasing_line_color="#ef5350"
-    )
-    fig.add_trace(trace)
-
-    # Add volume chart
-    fig.add_trace(create_volume_trace(df, row=2, col=1))
-
-    # Add trade markers
-    for trade in trades:
-        marker = create_trade_marker(trade)
-        marker.update(row=1, col=1)
-        fig.add_trace(marker)
-
-    # Update layout
-    fig.update_layout(height=800, showlegend=True, xaxis_rangeslider_visible=False)
-
-    return fig
-
-
-# Add new callback for model selection visibility
-@app.callback(
-    Output("model-selection-container", "style"),
-    [Input("ticker-input", "value")],
-)
-def update_model_selection_visibility(_) -> Dict[str, str]:
-    """Update the visibility of the model selection container."""
-    return {"display": "block"}
 
 
 def calculate_max_drawdown(prices: pd.Series) -> float:
@@ -978,16 +1098,23 @@ def update_graph(_) -> go.Figure:
 
 
 @app.callback(
-    Output("trade-history", "data"),
+    Output("trade-history", "children"),
     [Input("interval-component", "n_intervals")],
 )
-def update_trade_history() -> List[Dict[str, Any]]:
-    """Update trade history table."""
+def update_trade_history(n_intervals: int) -> List[html.Div]:
+    """Update trade history display.
+    
+    Args:
+        n_intervals: Number of intervals that have passed
+        
+    Returns:
+        List of HTML divs containing trade history
+    """
     try:
-        return get_trade_history()
+        return create_trade_history({})
     except Exception as e:
-        logger.error("Error updating trade history: %s", str(e))
-        return []
+        logger.error(f"Error updating trade history: {str(e)}")
+        return [html.Div("Error updating trade history", style={"color": "red"})]
 
 
 def get_portfolio_value() -> float:
@@ -1025,4 +1152,4 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    app.run_server(host=args.host, port=args.port, debug=args.debug)
+    app.run(host=args.host, port=args.port, debug=args.debug)

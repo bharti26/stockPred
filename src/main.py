@@ -13,6 +13,10 @@ from src.utils.visualization import TradingVisualizer
 load_dotenv()
 
 # Configure logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 def train_on_multiple_stocks(
@@ -84,30 +88,25 @@ def train_on_multiple_stocks(
 def main() -> None:
     """Main function to run the stock trading application."""
     try:
-        # Initialize components
-        stock_data = StockData("AAPL", "2020-01-01", "2023-12-31")
-        stock_data.fetch_data()
-        stock_data.add_technical_indicators()
-        stock_data.preprocess_data()
+        # Get list of tickers from mapping
+        from src.dashboard.app import TICKER_MODEL_MAPPING
+        tickers = list(TICKER_MODEL_MAPPING.keys())
+        logger.info(f"Training models for tickers: {tickers}")
         
-        env = StockTradingEnv(stock_data.data)
-        
-        # Create agent config
-        config = DQNAgentConfig(
-            state_size=env.observation_space.shape[0],
-            action_size=env.action_space.n
+        # Train on all tickers
+        metrics = train_on_multiple_stocks(
+            tickers=tickers,
+            model_path="models/multi_stock_model.pth",
+            num_episodes=100,
+            initial_balance=10000.0
         )
-        agent = DQNAgent(config)
         
-        trader = StockTrader(env, agent)
-        visualizer = TradingVisualizer()
-        
-        # Train the agent
-        history = trader.train(episodes=100)
-        
-        # Visualize results
-        visualizer.plot_training_history(history)
-        
+        # Log training results
+        logger.info("Training completed!")
+        logger.info("Final metrics:")
+        for metric_name, value in metrics.items():
+            logger.info(f"{metric_name}: {value}")
+            
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
 

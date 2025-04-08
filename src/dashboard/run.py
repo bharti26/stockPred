@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Main entry point."""
     args = parse_args()
-    app.run_server(host=args.host, port=args.port, debug=args.debug)
+    app.run(host=args.host, port=args.port, debug=args.debug)
 
 
 if __name__ == "__main__":

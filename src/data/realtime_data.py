@@ -51,32 +51,29 @@ class RealTimeStockData:
             buffer_size: Size of data buffer
         """
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            self.ticker = ticker
+            self.interval = interval
+            self.buffer_size = buffer_size
+            self.data = pd.DataFrame()
+            self.data_buffer = {}
+            self.callbacks: List[Callable[[pd.DataFrame], None]] = []
+            self.is_streaming: bool = False
+            self.stream_thread: Optional[threading.Thread] = None
+            self.last_error: Optional[str] = None
+            
+            # Initialize yfinance ticker
+            self.stock = yf.Ticker(ticker)
+            info = self.stock.info
             if not info:
                 raise ValueError(f"Could not get information for ticker {ticker}")
             
-            self.config = StreamingConfig(
-                ticker=ticker,
-                interval=interval,
-                buffer_size=buffer_size,
-                stock=stock
-            )
-            
-            self.state = StreamingState(
-                is_streaming=False,
-                stream_thread=None,
-                last_error=None,
-                data=pd.DataFrame(),
-                data_buffer={}
-            )
-            
-            self.callbacks: List[Callable[[pd.DataFrame], None]] = []
-            self.stock_data = StockData(ticker, interval=interval)
+            # Fetch initial data
+            self._fetch_initial_data()
             
         except Exception as e:
             error_msg = f"Error initializing ticker {ticker}: {str(e)}"
             logger.error(error_msg)
+            self.last_error = error_msg
             raise ValueError(f"Invalid ticker symbol {ticker}: {str(e)}") from e
 
     def add_callback(self, callback: Callable[[pd.DataFrame], None]) -> None:
@@ -88,73 +85,53 @@ class RealTimeStockData:
         self.callbacks.append(callback)
 
     def _fetch_initial_data(self) -> pd.DataFrame:
-        """Fetch initial historical data.
-
-        Returns:
-            DataFrame containing historical price data
-
-        Raises:
-            ValueError: If no data could be fetched after all retries
-        """
+        """Fetch initial historical data for the ticker."""
         max_retries = 3
-        retry_delay = 2  # seconds
-
+        retry_delay = 2
+        
         for attempt in range(max_retries):
             try:
-                intervals = ["1d", "1h", "5m", "1m"]
-                periods = ["1mo", "1wk", "5d", "1d"]
-
-                for interval in intervals:
-                    for period in periods:
-                        logger.info(
-                            f"Attempting to fetch {self.config.ticker} data with "
-                            f"interval {interval} and period {period}"
-                        )
-                        
-                        df = self.config.stock.history(period=period, interval=interval)
-                        if df.empty:
-                            logger.info(
-                                f"No data returned for {self.config.ticker} with "
-                                f"interval {interval} and period {period}"
-                            )
-                            continue
-                            
-                        logger.info(
-                            f"Successfully fetched {len(df)} data points "
-                            f"for {self.config.ticker}"
-                        )
-                        self.config.interval = interval
-                        return df.tail(self.config.buffer_size).copy()
-
-                if attempt < max_retries - 1:
-                    logger.info(
-                        f"Retry {attempt + 1}/{max_retries} after "
-                        f"{retry_delay} seconds..."
-                    )
-                    time.sleep(retry_delay)
-                    continue
+                # First try with daily data for 1 month
+                logger.info(f"Attempt {attempt + 1}: Fetching daily data for {self.ticker}")
+                data = self.stock.history(period="1mo", interval="1d")
                 
-                raise ValueError(
-                    f"No historical data available for {self.config.ticker} "
-                    f"after {max_retries} attempts"
-                )
-
+                if not data.empty:
+                    logger.info(f"Successfully fetched {len(data)} daily data points")
+                    self.data = data
+                    self._update_buffer(self.data)
+                    return self.data
+                
+                # If daily data fails, try with hourly data for 1 week
+                logger.info(f"Attempt {attempt + 1}: Fetching hourly data for {self.ticker}")
+                data = self.stock.history(period="1wk", interval="1h")
+                
+                if not data.empty:
+                    logger.info(f"Successfully fetched {len(data)} hourly data points")
+                    self.data = data
+                    self._update_buffer(self.data)
+                    return self.data
+                
+                # If hourly data fails, try with 5-minute data for 1 day
+                logger.info(f"Attempt {attempt + 1}: Fetching 5-minute data for {self.ticker}")
+                data = self.stock.history(period="1d", interval="5m")
+                
+                if not data.empty:
+                    logger.info(f"Successfully fetched {len(data)} 5-minute data points")
+                    self.data = data
+                    self._update_buffer(self.data)
+                    return self.data
+                
+                logger.warning(f"No data available for {self.ticker} after {attempt + 1} attempts")
+                time.sleep(retry_delay)
+                
             except Exception as e:
+                logger.error(f"Error fetching data for {self.ticker} (attempt {attempt + 1}): {str(e)}")
                 if attempt < max_retries - 1:
-                    logger.error(f"Error on attempt {attempt + 1}: {str(e)}")
                     time.sleep(retry_delay)
-                    continue
-                
-                self.state.last_error = f"Error fetching data: {str(e)}"
-                raise ValueError(
-                    f"Failed to fetch historical data for {self.config.ticker}: "
-                    f"{str(e)}"
-                ) from e
-
-        raise ValueError(
-            f"No historical data available for {self.config.ticker} "
-            f"after {max_retries} attempts"
-        )
+                else:
+                    raise ValueError(f"Failed to fetch data for {self.ticker} after {max_retries} attempts: {str(e)}")
+        
+        return pd.DataFrame()
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate technical indicators for the data."""
@@ -188,103 +165,136 @@ class RealTimeStockData:
             result = pd.DataFrame(result)
             return result
         except Exception as e:
-            self.state.last_error = f"Error calculating indicators: {str(e)}"
+            self.last_error = f"Error calculating indicators: {str(e)}"
             raise ValueError(f"Failed to calculate indicators: {str(e)}") from e
 
     def start_streaming(self) -> None:
         """Start real-time data streaming."""
-        if self.state.is_streaming:
+        if self.is_streaming:
             logger.warning("Already streaming!")
             return
 
         try:
-            # Fetch initial data
-            try:
-                self.state.data = self._fetch_initial_data()
-                if self.state.data.empty:
-                    raise ValueError(f"No initial data available for {self.config.ticker}")
-            except Exception as e:
-                logger.warning(f"Could not fetch initial data: {str(e)}")
-                # Create empty DataFrame with required columns
-                self.state.data = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-                logger.info("Created empty DataFrame as fallback")
+            if self.data.empty:
+                self._fetch_initial_data()
+                if self.data.empty:
+                    raise ValueError(f"No initial data available for {self.ticker}")
 
-            self.state.is_streaming = True
+            self.is_streaming = True
 
             def _stream() -> None:
-                while self.state.is_streaming:
+                while self.is_streaming:
                     try:
-                        latest = self.config.stock.history(period="1d", interval=self.config.interval)
+                        latest = self.stock.history(period="1d", interval=self.interval)
                         if latest.empty:
-                            logger.info(f"No new data available for {self.config.ticker}")
+                            logger.info(f"No new data available for {self.ticker}")
                             time.sleep(5)
                             continue
 
                         if not latest.empty and (
-                            self.state.data.empty or latest.index[-1] > self.state.data.index[-1]
+                            self.data.empty or latest.index[-1] > self.data.index[-1]
                         ):
-                            self.state.data = pd.concat([self.state.data, latest]).tail(self.config.buffer_size)
-                            self.state.data = self._calculate_indicators(self.state.data)
+                            self.data = pd.concat([self.data, latest]).tail(self.buffer_size)
+                            self.data = self._calculate_indicators(self.data)
+                            self._update_buffer(self.data)
                             for callback in self.callbacks:
-                                callback(self.state.data)
+                                callback(self.data)
                     except Exception as e:
                         logger.error(f"Error in streaming loop: {str(e)}")
                         time.sleep(5)
 
-            self.state.stream_thread = threading.Thread(target=_stream, daemon=True)
-            self.state.stream_thread.start()
+            self.stream_thread = threading.Thread(target=_stream, daemon=True)
+            self.stream_thread.start()
 
         except Exception as e:
-            self.state.last_error = f"Error starting stream: {str(e)}"
+            self.last_error = f"Error starting stream: {str(e)}"
             logger.error(f"Error starting stream: {str(e)}")
-            self.state.is_streaming = False
-            raise ValueError(f"Failed to start streaming for {self.config.ticker}: {str(e)}") from e
+            self.is_streaming = False
+            raise ValueError(f"Failed to start streaming for {self.ticker}: {str(e)}") from e
 
     def stop_streaming(self) -> None:
         """Stop real-time data streaming."""
-        self.state.is_streaming = False
-        if self.state.stream_thread:
-            self.state.stream_thread.join(timeout=1.0)
+        self.is_streaming = False
+        if self.stream_thread:
+            self.stream_thread.join(timeout=1.0)
         logger.info("Stopped streaming")
 
-    def get_latest_data(self) -> pd.DataFrame:
+    def get_latest_data(self) -> Optional[pd.DataFrame]:
         """Get the latest data."""
-        if self.state.data.empty:
-            if self.state.last_error:
-                raise ValueError(f"No data available: {self.state.last_error}")
-            raise ValueError(f"No data available for {self.config.ticker}")
-
         try:
-            if self.state.is_streaming:
-                latest = self.config.stock.history(period="1d", interval=self.config.interval)
-                if not latest.empty:
-                    latest = latest.tail(1)
-                    if not self.state.data.empty and latest.index[-1] > self.state.data.index[-1]:
-                        self.state.data = pd.concat([self.state.data, latest]).tail(self.config.buffer_size)
-                        self.state.data = self._calculate_indicators(self.state.data)
-                        logger.info(f"Updated data for {self.config.ticker} with {len(latest)} new points")
-                    return self.state.data.copy()
-                
-                logger.info(f"No new data available for {self.config.ticker}")
-                return self.state.data.copy()
+            # If we have no data, try to fetch initial data
+            if self.data.empty:
+                self._fetch_initial_data()
+                if self.data.empty:
+                    raise ValueError(f"No data available for {self.ticker}")
+                return self.data.copy()
 
-            return self.state.data.copy()
+            # Try to fetch new data with the same interval as our existing data
+            try:
+                # First try with daily data for 1 month
+                logger.info(f"Fetching daily data for {self.ticker}")
+                latest = self.stock.history(period="1mo", interval="1d")
+                
+                if not latest.empty:
+                    logger.info(f"Successfully fetched {len(latest)} daily data points")
+                    self.data = latest.tail(self.buffer_size).copy()
+                    self.data = self._calculate_indicators(self.data)
+                    self._update_buffer(self.data)
+                    return self.data.copy()
+                
+                # If daily data fails, try with hourly data for 1 week
+                logger.info(f"Fetching hourly data for {self.ticker}")
+                latest = self.stock.history(period="1wk", interval="1h")
+                
+                if not latest.empty:
+                    logger.info(f"Successfully fetched {len(latest)} hourly data points")
+                    self.data = latest.tail(self.buffer_size).copy()
+                    self.data = self._calculate_indicators(self.data)
+                    self._update_buffer(self.data)
+                    return self.data.copy()
+                
+                # If hourly data fails, try with 5-minute data for 1 day
+                logger.info(f"Fetching 5-minute data for {self.ticker}")
+                latest = self.stock.history(period="1d", interval="5m")
+                
+                if not latest.empty:
+                    logger.info(f"Successfully fetched {len(latest)} 5-minute data points")
+                    self.data = latest.tail(self.buffer_size).copy()
+                    self.data = self._calculate_indicators(self.data)
+                    self._update_buffer(self.data)
+                    return self.data.copy()
+                
+                # If we couldn't get new data but have existing data, return that
+                if not self.data.empty:
+                    logger.info(f"Using existing data for {self.ticker} ({len(self.data)} points)")
+                    return self.data.copy()
+                
+                raise ValueError(f"No data available for {self.ticker}")
+                
+            except Exception as e:
+                logger.error(f"Error fetching new data: {str(e)}")
+                if not self.data.empty:
+                    logger.info(f"Using cached data for {self.ticker} due to error")
+                    return self.data.copy()
+                raise ValueError(f"Error getting latest data: {str(e)}")
+            
         except Exception as e:
-            if not self.state.data.empty:
-                logger.warning(f"Using cached data for {self.config.ticker} due to error: {str(e)}")
-                return self.state.data.copy()
+            logger.error(f"Error getting latest data: {str(e)}")
+            if not self.data.empty:
+                logger.info(f"Using cached data for {self.ticker} due to error")
+                return self.data.copy()
             raise ValueError(f"Error getting latest data: {str(e)}")
 
     def get_latest_price(self) -> Optional[float]:
         """Get the latest closing price."""
-        if not self.state.data.empty:
-            return float(self.state.data["Close"].iloc[-1])
+        if not self.data.empty:
+            return float(self.data["Close"].iloc[-1])
         return None
 
     def _get_indicator_value(self, latest: pd.Series, column: str) -> Optional[float]:
         """Safely get an indicator value from the latest data."""
         try:
-            if column in self.state.data.columns:
+            if column in self.data.columns:
                 val = latest[column]
                 return None if pd.isna(val) else float(val)
         except Exception:
@@ -305,16 +315,73 @@ class RealTimeStockData:
 
     def get_latest_indicators(self) -> Dict[str, Union[float, None]]:
         """Get the latest technical indicators."""
-        if self.state.data.empty:
+        if self.data.empty:
             return {}
 
-        latest = self.state.data.iloc[-1]
+        latest = self.data.iloc[-1]
         return self._initialize_indicator_result(latest)
+
+    def get_current_values(self) -> Dict[str, Union[float, str]]:
+        """Get current stock values from yfinance.
+        
+        Returns:
+            Dictionary containing current price, change, volume, and market cap
+        """
+        try:
+            logger.info(f"Fetching current values for {self.ticker}")
+            
+            # If we don't have data yet, fetch initial data
+            if self.data.empty:
+                logger.info("No data available, fetching initial data")
+                self._fetch_initial_data()
+            
+            # Get the latest data point
+            if not self.data.empty:
+                latest = self.data.iloc[-1]
+                logger.info(f"Latest data point: {latest}")
+                
+                return {
+                    "current_price": latest["Close"],
+                    "change": ((latest["Close"] - latest["Open"]) / latest["Open"]) * 100,
+                    "change_percent": ((latest["Close"] - latest["Open"]) / latest["Open"]) * 100,
+                    "volume": latest["Volume"],
+                    "market_cap": self.stock.info.get("marketCap", 0)
+                }
+            
+            # If we still don't have data, try to get it from yfinance directly
+            info = self.stock.info
+            logger.info(f"Raw info data: {info}")
+            
+            current_price = info.get("regularMarketPrice", 0.0)
+            change = info.get("regularMarketChange", 0.0)
+            change_percent = info.get("regularMarketChangePercent", 0.0)
+            volume = info.get("regularMarketVolume", 0)
+            market_cap = info.get("marketCap", 0)
+            
+            logger.info(f"Extracted values - Price: {current_price}, Change: {change}, Volume: {volume}")
+            
+            return {
+                "current_price": current_price,
+                "change": change,
+                "change_percent": change_percent,
+                "volume": volume,
+                "market_cap": market_cap
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting current values: {str(e)}")
+            return {
+                "current_price": 0.0,
+                "change": 0.0,
+                "change_percent": 0.0,
+                "volume": 0,
+                "market_cap": 0
+            }
 
     def fetch_realtime_data(self) -> Optional[pd.DataFrame]:
         """Fetch real-time data."""
         try:
-            latest = self.config.stock.history(period="1d", interval=self.config.interval)
+            latest = self.stock.history(period="1d", interval=self.interval)
             if not latest.empty:
                 return latest
         except Exception as e:
@@ -323,13 +390,13 @@ class RealTimeStockData:
 
     def _update_buffer(self, data: pd.DataFrame) -> None:
         """Update the data buffer with new data."""
-        if self.config.ticker not in self.state.data_buffer:
-            self.state.data_buffer[self.config.ticker] = data
+        if self.ticker not in self.data_buffer:
+            self.data_buffer[self.ticker] = data
             return
             
-        self.state.data_buffer[self.config.ticker] = pd.concat(
-            [self.state.data_buffer[self.config.ticker], data]
-        ).drop_duplicates().tail(self.config.buffer_size)
+        self.data_buffer[self.ticker] = pd.concat(
+            [self.data_buffer[self.ticker], data]
+        ).drop_duplicates().tail(self.buffer_size)
 
     def process_realtime_data(
         self,
@@ -338,11 +405,11 @@ class RealTimeStockData:
     ) -> pd.DataFrame:
         """Process real-time data."""
         try:
-            self.state.data_buffer[ticker] = pd.concat(
-                [self.state.data_buffer.get(ticker, pd.DataFrame()), df]
-            ).tail(self.config.buffer_size)
+            self.data_buffer[ticker] = pd.concat(
+                [self.data_buffer.get(ticker, pd.DataFrame()), df]
+            ).tail(self.buffer_size)
 
-            processed_df = self.state.data_buffer[ticker].copy()
+            processed_df = self.data_buffer[ticker].copy()
             processed_df = self.add_technical_indicators(processed_df)
             processed_df = self.preprocess_data(processed_df)
             return processed_df
@@ -353,7 +420,7 @@ class RealTimeStockData:
     def add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add technical indicators to the data."""
         try:
-            stock_data = StockData(self.config.ticker, "", "")
+            stock_data = StockData(self.ticker, "", "")
             stock_data.data = df.copy()
             return stock_data.add_technical_indicators()
         except Exception as e:
@@ -363,7 +430,7 @@ class RealTimeStockData:
     def preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Preprocess the data."""
         try:
-            stock_data = StockData(self.config.ticker, "", "")
+            stock_data = StockData(self.ticker, "", "")
             stock_data.data = df.copy()
             return stock_data.preprocess_data()
         except Exception as e:
